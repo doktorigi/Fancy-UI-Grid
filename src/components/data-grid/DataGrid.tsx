@@ -18,6 +18,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableFooter,
 } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -1086,6 +1087,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     exportToXlsx(dataToExport, orderedVisibleColumnDefs.map(c => ({...c, field: c.field as (keyof TData & string)})), 'grid_export');
   };
 
+  const renderedRowsCount = paginatedData.filter(r => !r.isGroupHeader).length;
+
 
   return (
     <div
@@ -1311,6 +1314,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               </TableRow>
             )}
           </TableBody>
+          {renderedRowsCount > 0 && (
+            <TableFooter>
+              <TableRow>
+                <TableCell 
+                  colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
+                  className="text-sm text-muted-foreground text-center"
+                >
+                  Displaying {renderedRowsCount} row{renderedRowsCount === 1 ? "" : "s"} on this page.
+                </TableCell>
+              </TableRow>
+            </TableFooter>
+          )}
         </Table>
       </div>
       <DataGridPagination
