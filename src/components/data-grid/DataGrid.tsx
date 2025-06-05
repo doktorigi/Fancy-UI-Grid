@@ -6,6 +6,8 @@ import type {
   DataGridProps,
   DataGridState,
   FilterValue,
+  HierarchicalData,
+  ProcessedRow,
 } from '@/types/data-grid';
 import {
   Table,
@@ -23,20 +25,23 @@ import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { ChevronRight, ChevronDown } from 'lucide-react';
 
-const getCellValue = <TData,>(row: TData, field: keyof TData & string): any => {
-  return row[field];
+const getCellValue = <TData, PRow extends { originalRow: TData }>(row: PRow, field: keyof TData & string): any => {
+  return row.originalRow[field];
 };
 
 const DEFAULT_COL_WIDTH = 150; // px
 
-export function DataGrid<TData extends { id: string | number }>({
+export function DataGrid<TData extends HierarchicalData<TData>>({
   data: initialData,
   columnDefs: initialColumnDefs, 
   defaultPageSize = 10,
   pageSizeOptions = [10, 25, 50, 100],
   enableRowSelection = true,
   onCellEdit,
+  isTreeData = false,
+  treeColumn: specifiedTreeColumn,
 }: DataGridProps<TData>) {
   const [state, setState] = React.useState<DataGridState<TData>>(() => {
     const defaultWidths: Record<keyof TData & string, string | number> = {};
@@ -53,7 +58,6 @@ export function DataGrid<TData extends { id: string | number }>({
       }
     });
     
-    // Ensure pinned columns are not in the main columnOrder initially
     const unpinnedColumnOrder = initialColumnOrder.filter(
       field => !initialPinnedLeft.includes(field) && !initialPinnedRight.includes(field)
     );
@@ -73,20 +77,31 @@ export function DataGrid<TData extends { id: string | number }>({
       editingCell: null,
       editInputValue: '',
       pinnedColumns: { left: initialPinnedLeft, right: initialPinnedRight },
+      expandedRows: new Set<string | number>(),
     };
   });
+
+  const treeColumn = specifiedTreeColumn || (initialColumnDefs.length > 0 ? initialColumnDefs[0].field : undefined);
 
   const getUniqueColumnValues = React.useCallback((field: keyof TData & string): string[] => {
     if (!initialData) return [];
     const uniqueValues = new Set<string>();
-    initialData.forEach(row => {
-      const value = getCellValue(row, field);
-      if (value !== undefined && value !== null) {
-        uniqueValues.add(String(value));
-      }
-    });
+    
+    const traverse = (items: TData[]) => {
+      items.forEach(row => {
+        const value = (row as any)[field]; // Access original row directly
+        if (value !== undefined && value !== null) {
+          uniqueValues.add(String(value));
+        }
+        if (isTreeData && row.children) {
+          traverse(row.children);
+        }
+      });
+    };
+    traverse(initialData);
     return Array.from(uniqueValues).sort();
-  }, [initialData]);
+  }, [initialData, isTreeData]);
+
 
   const processedColumnDefs = React.useMemo(() => {
     return initialColumnDefs.map(colDef => {
@@ -99,6 +114,48 @@ export function DataGrid<TData extends { id: string | number }>({
       return colDef;
     });
   }, [initialColumnDefs, getUniqueColumnValues]);
+
+
+  const flattenTreeData = React.useCallback((
+    data: TData[],
+    expandedRows: Set<string | number>,
+    level = 0
+  ): ProcessedRow<TData>[] => {
+    let flatList: ProcessedRow<TData>[] = [];
+    data.forEach(item => {
+      const hasChildren = !!(item.children && item.children.length > 0);
+      const isExpanded = expandedRows.has(item.id);
+      flatList.push({ 
+        originalRow: item, 
+        id: item.id, 
+        level, 
+        hasChildren, 
+        isExpanded,
+        ...item // Spread item properties for direct access if needed, careful with overrides
+      });
+      if (hasChildren && isExpanded && item.children) {
+        flatList = flatList.concat(flattenTreeData(item.children, expandedRows, level + 1));
+      }
+    });
+    return flatList;
+  }, []);
+
+
+  const baseDataForProcessing = React.useMemo(() => {
+    if (isTreeData) {
+      return flattenTreeData(initialData || [], state.expandedRows);
+    }
+    // Wrap non-tree data in a similar structure for consistent processing
+    return (initialData || []).map(item => ({
+      originalRow: item,
+      id: item.id,
+      level: 0,
+      hasChildren: false,
+      isExpanded: false,
+       ...item
+    }));
+  }, [initialData, isTreeData, flattenTreeData, state.expandedRows]);
+
 
   const handleSort = (field: keyof TData & string) => {
     setState((prevState) => {
@@ -165,6 +222,18 @@ export function DataGrid<TData extends { id: string | number }>({
     });
   };
 
+  const handleToggleExpandRow = (rowId: string | number) => {
+    setState(prevState => {
+      const newExpandedRows = new Set(prevState.expandedRows);
+      if (newExpandedRows.has(rowId)) {
+        newExpandedRows.delete(rowId);
+      } else {
+        newExpandedRows.add(rowId);
+      }
+      return { ...prevState, expandedRows: newExpandedRows, currentPage: 1 }; // Reset to page 1 on expand/collapse
+    });
+  };
+
   const handleColumnWidthChange = (field: keyof TData & string, newWidth: number) => {
     setState(prevState => ({
       ...prevState,
@@ -185,7 +254,7 @@ export function DataGrid<TData extends { id: string | number }>({
     event.preventDefault(); 
     if (state.draggedColumn && state.draggedColumn !== targetField) {
        const isTargetPinned = state.pinnedColumns.left.includes(targetField) || state.pinnedColumns.right.includes(targetField);
-       if (!isTargetPinned) { // Prevent dragging over pinned columns for now
+       if (!isTargetPinned) { 
          setState(prevState => ({ ...prevState, draggedOverColumn: targetField }));
        }
     }
@@ -203,7 +272,7 @@ export function DataGrid<TData extends { id: string | number }>({
     const isSourcePinned = state.pinnedColumns.left.includes(sourceField!) || state.pinnedColumns.right.includes(sourceField!);
     const isTargetPinned = state.pinnedColumns.left.includes(targetField) || state.pinnedColumns.right.includes(targetField);
 
-    if (sourceField && sourceField !== targetField && !isSourcePinned && !isTargetPinned) { // Only allow reordering of unpinned columns
+    if (sourceField && sourceField !== targetField && !isSourcePinned && !isTargetPinned) {
       setState(prevState => {
         const newColumnOrder = [...prevState.columnOrder];
         const sourceIndex = newColumnOrder.indexOf(sourceField);
@@ -235,11 +304,21 @@ export function DataGrid<TData extends { id: string | number }>({
         newPinnedLeft.push(field);
       } else if (position === 'right') {
         newPinnedRight.push(field);
-      } else { // Unpinning
-        // Add back to columnOrder, attempt to insert at a reasonable place, e.g., start
-        // For simplicity, add to the start of scrollable columns if not already there
+      } else { 
         if (!newColumnOrder.includes(field)) {
-            newColumnOrder = [field, ...newColumnOrder];
+            const originalDef = initialColumnDefs.find(c => c.field === field);
+            const originalIndex = initialColumnDefs.findIndex(c => c.field === field);
+            // Attempt to insert at original relative position among unpinned columns
+            let insertAtIndex = newColumnOrder.length; 
+            for (let i = originalIndex + 1; i < initialColumnDefs.length; i++) {
+                const nextOriginalCol = initialColumnDefs[i].field;
+                const idxInOrder = newColumnOrder.indexOf(nextOriginalCol);
+                if (idxInOrder !== -1) {
+                    insertAtIndex = idxInOrder;
+                    break;
+                }
+            }
+             newColumnOrder.splice(insertAtIndex, 0, field);
         }
       }
       return {
@@ -271,10 +350,12 @@ export function DataGrid<TData extends { id: string | number }>({
       const { rowId, field } = state.editingCell;
       let valueToCommit = state.editInputValue;
       const columnDef = processedColumnDefs.find(col => col.field === field);
-      if (columnDef?.filterType === 'number' || typeof getCellValue(initialData.find(r => r.id === rowId)!, field) === 'number') {
+      const originalRow = baseDataForProcessing.find(r => r.id === rowId)?.originalRow;
+
+      if (columnDef?.filterType === 'number' || (originalRow && typeof originalRow[field] === 'number')) {
         valueToCommit = parseFloat(state.editInputValue);
-        if (isNaN(valueToCommit)) {
-          valueToCommit = getCellValue(initialData.find(r => r.id === rowId)!, field);
+        if (isNaN(valueToCommit) && originalRow) {
+          valueToCommit = originalRow[field]; 
         }
       }
       onCellEdit(rowId, field, valueToCommit);
@@ -297,8 +378,8 @@ export function DataGrid<TData extends { id: string | number }>({
   };
 
   const filteredData = React.useMemo(() => {
-    if (!initialData) return [];
-    let dataToFilter = [...initialData];
+    if (!baseDataForProcessing) return [];
+    let dataToFilter = [...baseDataForProcessing];
 
     if (state.globalFilter) {
       const lowerGlobalFilter = state.globalFilter.toLowerCase();
@@ -360,7 +441,7 @@ export function DataGrid<TData extends { id: string | number }>({
       });
     });
     return dataToFilter;
-  }, [initialData, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns]);
+  }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns]);
 
   const sortedData = React.useMemo(() => {
     if (!state.sortConfig) return filteredData;
@@ -370,18 +451,25 @@ export function DataGrid<TData extends { id: string | number }>({
       const valB = getCellValue(b, field);
       if (valA === null || valA === undefined) return direction === 'asc' ? 1 : -1;
       if (valB === null || valB === undefined) return direction === 'asc' ? -1 : 1;
+      
       if (typeof valA === 'number' && typeof valB === 'number') {
         return direction === 'asc' ? valA - valB : valB - valA;
       }
-      if (valA instanceof Date && valB instanceof Date) {
-        return direction === 'asc' ? valA.getTime() - valB.getTime() : valB.getTime() - valA.getTime();
+      // Attempt to parse as date if column type hints at it or values look like dates
+      const colDef = processedColumnDefs.find(c => c.field === field);
+      if (colDef?.filterType === 'date' || (String(valA).match(/^\d{4}-\d{2}-\d{2}/) && String(valB).match(/^\d{4}-\d{2}-\d{2}/))) {
+        const dateA = new Date(String(valA)).getTime();
+        const dateB = new Date(String(valB)).getTime();
+        if (!isNaN(dateA) && !isNaN(dateB)) {
+            return direction === 'asc' ? dateA - dateB : dateB - dateA;
+        }
       }
       if (typeof valA === 'string' && typeof valB === 'string') {
-        return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(String(valA));
+        return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
       }
       return direction === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
     });
-  }, [filteredData, state.sortConfig]);
+  }, [filteredData, state.sortConfig, processedColumnDefs]);
 
   const paginatedData = React.useMemo(() => {
     const startIndex = (state.currentPage - 1) * state.pageSize;
@@ -418,7 +506,7 @@ export function DataGrid<TData extends { id: string | number }>({
     const left: Record<string, number> = {};
     let currentLeftOffset = 0;
     if (enableRowSelection) {
-        currentLeftOffset += 50; // Approx width of checkbox column
+        currentLeftOffset += 50; 
     }
     state.pinnedColumns.left.forEach(field => {
       if (state.visibleColumns.includes(field)) {
@@ -429,7 +517,7 @@ export function DataGrid<TData extends { id: string | number }>({
 
     const right: Record<string, number> = {};
     let currentRightOffset = 0;
-    state.pinnedColumns.right.slice().reverse().forEach(field => { // Iterate in reverse for right offsets
+    state.pinnedColumns.right.slice().reverse().forEach(field => { 
        if (state.visibleColumns.includes(field)) {
         right[field] = currentRightOffset;
         currentRightOffset += getColumnWidth(field);
@@ -452,8 +540,9 @@ export function DataGrid<TData extends { id: string | number }>({
     );
   }
 
-  const renderCellContent = (row: TData, col: ColumnDefinition<TData>): React.ReactNode => {
+  const renderCellContent = (row: ProcessedRow<TData>, col: ColumnDefinition<TData>): React.ReactNode => {
     const cellValue = getCellValue(row, col.field);
+
     if (state.editingCell && state.editingCell.rowId === row.id && state.editingCell.field === col.field) {
       const colDef = processedColumnDefs.find(c => c.field === col.field);
       const inputType = colDef?.filterType === 'number' || typeof cellValue === 'number' ? 'number' : 'text';
@@ -470,34 +559,59 @@ export function DataGrid<TData extends { id: string | number }>({
       );
     }
 
-    if (col.field === 'age') {
-      return <span className="text-right w-full block">{cellValue}</span>;
-    }
-    if (col.field === 'isActive') {
-      return (
-        <Badge variant={cellValue ? 'default' : 'secondary'} className={cn(cellValue ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600', "text-white")}>
-          {cellValue ? 'Yes' : 'No'}
-        </Badge>
-      );
-    }
-    if (col.field === 'registrationDate') {
-      try {
-        return new Date(String(cellValue)).toLocaleDateString();
-      } catch (e) {
-        return String(cellValue);
+    const content = (() => {
+      if (col.field === 'age') {
+        return <span className="text-right w-full block">{cellValue}</span>;
       }
-    }
-    if (col.field === 'progress') {
-      return (
-        <div className="flex items-center">
-          <div className="w-full bg-muted rounded-full h-2.5 mr-2">
-            <div className="bg-primary h-2.5 rounded-full" style={{ width: `${cellValue}%` }}></div>
+      if (col.field === 'isActive') {
+        return (
+          <Badge variant={cellValue ? 'default' : 'secondary'} className={cn(cellValue ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600', "text-white")}>
+            {cellValue ? 'Yes' : 'No'}
+          </Badge>
+        );
+      }
+      if (col.field === 'registrationDate') {
+        try {
+          return new Date(String(cellValue)).toLocaleDateString();
+        } catch (e) {
+          return String(cellValue);
+        }
+      }
+      if (col.field === 'progress') {
+        return (
+          <div className="flex items-center">
+            <div className="w-full bg-muted rounded-full h-2.5 mr-2">
+              <div className="bg-primary h-2.5 rounded-full" style={{ width: `${cellValue}%` }}></div>
+            </div>
+            <span className="text-sm">{cellValue}%</span>
           </div>
-          <span className="text-sm">{cellValue}%</span>
+        );
+      }
+      return String(cellValue);
+    })();
+
+    if (isTreeData && col.field === treeColumn) {
+      return (
+        <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
+          {row.hasChildren ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent row selection/other cell events
+                handleToggleExpandRow(row.id);
+              }}
+              className="mr-1 p-0.5 rounded hover:bg-accent focus:outline-none"
+              aria-label={row.isExpanded ? "Collapse row" : "Expand row"}
+            >
+              {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+          ) : (
+            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span> // Placeholder for alignment
+          )}
+          {content}
         </div>
       );
     }
-    return String(cellValue);
+    return content;
   };
   
   const checkboxColumnWidth = '50px';
@@ -530,7 +644,7 @@ export function DataGrid<TData extends { id: string | number }>({
                     width: checkboxColumnWidth, 
                     minWidth: checkboxColumnWidth,
                     left: 0,
-                    zIndex: 21 // Higher than other header cells
+                    zIndex: 21 
                   }}
                 >
                   <div className="px-3 py-2 h-full flex items-center justify-center">
@@ -543,25 +657,25 @@ export function DataGrid<TData extends { id: string | number }>({
                   </div>
                 </TableHead>
               )}
-              {orderedVisibleColumnDefs.map((col, index) => {
-                const isReorderable = col.reorderable !== false && !state.pinnedColumns.left.includes(col.field) && !state.pinnedColumns.right.includes(col.field);
-                const currentWidth = state.columnWidths[col.field] || col.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
-                const isLeftPinned = state.pinnedColumns.left.includes(col.field);
-                const isRightPinned = state.pinnedColumns.right.includes(col.field);
+              {orderedVisibleColumnDefs.map((colDef) => {
+                const isReorderable = colDef.reorderable !== false && !state.pinnedColumns.left.includes(colDef.field) && !state.pinnedColumns.right.includes(colDef.field);
+                const currentWidth = state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
+                const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
+                const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
                 
                 let stickyStyle: React.CSSProperties = {};
                 if (isLeftPinned) {
-                  stickyStyle.left = `${stickyOffsets.left[col.field] || 0}px`;
+                  stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
                 } else if (isRightPinned) {
-                  stickyStyle.right = `${stickyOffsets.right[col.field] || 0}px`;
+                  stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
                 }
 
                 return (
                   <TableHead
-                    key={col.field}
+                    key={colDef.field}
                     style={{ 
                       width: currentWidth, 
-                      minWidth: col.minWidth || currentWidth || '50px',
+                      minWidth: colDef.minWidth || currentWidth || '50px',
                       ...stickyStyle
                     }}
                     className={cn(
@@ -571,16 +685,16 @@ export function DataGrid<TData extends { id: string | number }>({
                       isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow"
                     )} 
                     draggable={isReorderable}
-                    onDragStart={(e) => isReorderable && handleDragStart(col.field, e)}
-                    onDragOver={(e) => isReorderable && handleDragOver(e, col.field)}
+                    onDragStart={(e) => isReorderable && handleDragStart(colDef.field, e)}
+                    onDragOver={(e) => isReorderable && handleDragOver(e, colDef.field)}
                     onDragLeave={() => isReorderable && handleDragLeave()}
-                    onDrop={(e) => isReorderable && handleDrop(col.field, e)}
+                    onDrop={(e) => isReorderable && handleDrop(colDef.field, e)}
                     onDragEnd={() => isReorderable && handleDragEnd()}
-                    data-is-dragged={state.draggedColumn === col.field}
-                    data-is-drop-target={state.draggedOverColumn === col.field && state.draggedColumn !== col.field}
+                    data-is-dragged={state.draggedColumn === colDef.field}
+                    data-is-drop-target={state.draggedOverColumn === colDef.field && state.draggedColumn !== colDef.field}
                   >
                     <DataGridHeaderCell
-                      column={col}
+                      column={colDef}
                       sortConfig={state.sortConfig}
                       onSort={handleSort}
                       onFilterChange={handleColumnFilterChange}
@@ -611,7 +725,7 @@ export function DataGrid<TData extends { id: string | number }>({
                       className="px-3 py-2 sticky-body-cell"
                       style={{
                         left: 0,
-                        zIndex: 11 // Higher than other body cells in case of overlap
+                        zIndex: 11 
                       }}
                     >
                       <Checkbox
@@ -622,35 +736,35 @@ export function DataGrid<TData extends { id: string | number }>({
                       />
                     </TableCell>
                   )}
-                  {orderedVisibleColumnDefs.map((col) => {
-                     const isLeftPinned = state.pinnedColumns.left.includes(col.field);
-                     const isRightPinned = state.pinnedColumns.right.includes(col.field);
+                  {orderedVisibleColumnDefs.map((colDef) => {
+                     const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
+                     const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
                      let stickyStyle: React.CSSProperties = {};
                       if (isLeftPinned) {
-                        stickyStyle.left = `${stickyOffsets.left[col.field] || 0}px`;
+                        stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
                       } else if (isRightPinned) {
-                        stickyStyle.right = `${stickyOffsets.right[col.field] || 0}px`;
+                        stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
                       }
 
                     return (
                     <TableCell 
-                      key={col.field} 
+                      key={colDef.field} 
                       className={cn(
                         "px-3 py-2 truncate", 
-                        col.editable && "cursor-pointer",
+                        colDef.editable && "cursor-pointer",
                         (isLeftPinned || isRightPinned) && "sticky-body-cell",
                         isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
                         isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow"
                         )}
                       style={{ 
-                        width: state.columnWidths[col.field] || col.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
-                        maxWidth: state.columnWidths[col.field] || col.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                        width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                        maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
                         ...stickyStyle
                       }}
-                      title={String(getCellValue(row, col.field))}
-                      onDoubleClick={() => col.editable && handleCellDoubleClick(row.id, col.field, getCellValue(row, col.field))}
+                      title={String(getCellValue(row, colDef.field))}
+                      onDoubleClick={() => colDef.editable && handleCellDoubleClick(row.id, colDef.field, getCellValue(row, colDef.field))}
                     >
-                      {renderCellContent(row, col)}
+                      {renderCellContent(row, colDef)}
                     </TableCell>
                   )}
                   )}

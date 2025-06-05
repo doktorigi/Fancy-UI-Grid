@@ -59,16 +59,37 @@ export interface ActiveFilters<TData = any> {
   [field: string]: FilterValue;
 }
 
-export interface DataGridProps<TData = any> {
+// TData items can optionally have children for tree data
+export interface HierarchicalData<TData = any> {
+  id: string | number;
+  children?: HierarchicalData<TData>[];
+  // Other properties of TData
+  [key: string]: any;
+}
+
+export interface ProcessedRow<TData extends HierarchicalData<TData>> {
+  originalRow: TData;
+  id: string | number;
+  level: number;
+  hasChildren: boolean;
+  isExpanded?: boolean; // Optional, can be derived from expandedRows set
+  // Allow direct access to originalRow properties
+  [key: string]: any; 
+}
+
+
+export interface DataGridProps<TData extends HierarchicalData<TData>> {
   data: TData[];
   columnDefs: ColumnDefinition<TData>[];
   defaultPageSize?: number;
   pageSizeOptions?: number[];
   enableRowSelection?: boolean;
   onCellEdit?: (rowId: string | number, field: keyof TData & string, value: any) => void;
+  isTreeData?: boolean;
+  treeColumn?: keyof TData & string; // Specifies which column shows tree controls
 }
 
-export interface DataGridState<TData = any> {
+export interface DataGridState<TData extends HierarchicalData<TData>> {
   currentPage: number;
   pageSize: number;
   sortConfig: SortConfig<TData> | null;
@@ -86,4 +107,5 @@ export interface DataGridState<TData = any> {
     left: (keyof TData & string)[];
     right: (keyof TData & string)[];
   };
+  expandedRows: Set<string | number>; // For tree data
 }
