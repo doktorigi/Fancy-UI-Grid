@@ -55,9 +55,10 @@ const columnDefs: ColumnDefinition<Person>[] = [
     filterable: true,
     filterType: 'text',
     editable: true,
-    defaultWidth: '200px', // Increased width for tree controls
+    defaultWidth: '200px', 
     iconName: 'Users',
     pinned: 'left',
+    groupable: true,
   },
   {
     field: 'lastName',
@@ -68,6 +69,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     editable: true,
     defaultWidth: '150px',
     iconName: 'Users',
+    groupable: true,
   },
   {
     field: 'age',
@@ -78,6 +80,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     editable: true,
     defaultWidth: '100px',
     iconName: 'Hash',
+    groupable: true,
   },
   {
     field: 'email',
@@ -88,6 +91,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     editable: true,
     defaultWidth: '250px',
     iconName: 'Mail',
+    groupable: false, // Example of non-groupable
   },
   {
     field: 'isActive',
@@ -97,6 +101,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     filterType: 'boolean',
     defaultWidth: '120px',
     iconName: 'Activity',
+    groupable: true,
   },
   {
     field: 'registrationDate',
@@ -106,6 +111,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     filterType: 'date',
     defaultWidth: '180px',
     iconName: 'CalendarDays',
+    groupable: true,
   },
   {
     field: 'city',
@@ -116,6 +122,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     defaultWidth: '150px',
     iconName: 'Edit3', 
     pinned: 'right',
+    groupable: true,
   },
   {
     field: 'progress',
@@ -124,6 +131,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     defaultWidth: '150px',
     iconName: 'Hash',
     editable: true,
+    groupable: true,
   },
 ];
 
@@ -161,12 +169,13 @@ export default function Home() {
       <DataGrid<Person>
         data={gridData}
         columnDefs={columnDefs}
-        defaultPageSize={10} // Adjusted default page size for tree view
+        defaultPageSize={10} 
         pageSizeOptions={[5, 10, 15, 25, 50]}
         enableRowSelection={true}
         onCellEdit={handleCellEdit}
-        isTreeData={true}
+        isTreeData={false} // Set to false to test grouping, or true for tree
         treeColumn="firstName"
+        enableGroupingPanel={true} // Enable the grouping panel
       />
     </main>
   );

@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { DataGridFilterPopover } from './DataGridFilterPopover';
-import { ArrowDown, ArrowUp, Filter, Users, Mail, CalendarDays, Hash, Edit3, Activity, Pin, PinOff } from 'lucide-react';
+import { ArrowDown, ArrowUp, Filter, Users, Mail, CalendarDays, Hash, Edit3, Activity, Pin, PinOff, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DataGridHeaderCellProps<TData> {
@@ -23,8 +23,10 @@ interface DataGridHeaderCellProps<TData> {
   currentWidth: string | number;
   onColumnWidthChange: (field: keyof TData & string, newWidth: number) => void;
   onPinColumn: (field: keyof TData & string, position: 'left' | 'right' | null) => void;
-  isDraggable?: boolean;
+  isDraggableForReorder?: boolean; // For column reordering
+  isDraggableForGrouping?: boolean; // For column grouping
   currentPinnedState?: 'left' | 'right' | null;
+  onDragStartColumn: (field: keyof TData & string, event: React.DragEvent) => void; // Generic drag start
 }
 
 const iconMap: { [key: string]: LucideIcon } = {
@@ -44,8 +46,10 @@ export function DataGridHeaderCell<TData>({
   columnFilters,
   onColumnWidthChange,
   onPinColumn,
-  isDraggable,
+  isDraggableForReorder,
+  isDraggableForGrouping,
   currentPinnedState,
+  onDragStartColumn,
 }: DataGridHeaderCellProps<TData>) {
   const isSorted = sortConfig?.field === column.field;
   const isFiltered = !!columnFilters[column.field];
@@ -84,15 +88,25 @@ export function DataGridHeaderCell<TData>({
   };
   
   const isResizable = column.resizable !== false;
-  const canPin = column.reorderable !== false; // Typically, non-reorderable columns shouldn't be pinnable either
+  // A column can be dragged for reordering OR grouping (or both, if enabled)
+  const isDraggable = isDraggableForReorder || (isDraggableForGrouping && column.groupable !== false);
+  const canPin = column.reorderable !== false; 
 
   return (
     <div 
-      className={cn("flex items-center justify-between group py-2 pr-2 h-full w-full", isDraggable && "cursor-grab")}
+      className={cn(
+        "flex items-center justify-between group py-2 pr-2 h-full w-full",
+        isDraggable && "cursor-grab"
+      )}
       style={{ position: 'relative' }} 
+      draggable={isDraggable} // Enable draggable attribute on this div
+      onDragStart={(e) => isDraggable && onDragStartColumn(column.field, e)}
     >
+      {isDraggable && (
+         <GripVertical className="h-4 w-4 text-muted-foreground opacity-50 group-hover:opacity-100 cursor-grab mr-1 shrink-0" />
+      )}
       <div className="flex items-center flex-grow min-w-0">
-        {IconComponent && <IconComponent className="mr-2 h-4 w-4 text-muted-foreground" />}
+        {IconComponent && <IconComponent className="mr-2 h-4 w-4 text-muted-foreground shrink-0" />}
         {column.sortable ? (
           <Button
             variant="ghost"
@@ -102,8 +116,8 @@ export function DataGridHeaderCell<TData>({
             aria-label={`Sort by ${column.headerText}`}
           >
             {headerContent}
-            {isSorted && sortConfig?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4" />}
-            {isSorted && sortConfig?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4" />}
+            {isSorted && sortConfig?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4 shrink-0" />}
+            {isSorted && sortConfig?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4 shrink-0" />}
           </Button>
         ) : (
           <div className="px-1 py-0.5 font-semibold flex-grow min-w-0">{headerContent}</div>
@@ -174,7 +188,11 @@ export function DataGridHeaderCell<TData>({
                 filterValue={columnFilters[column.field]}
                 onFilterChange={(field, value) => {
                   onFilterChange(field, value);
-                  setIsFilterPopoverOpen(false);
+                  if (!value || (value.type === 'text' && value.value === '') || (value.type === 'number' && value.value === undefined)) {
+                    // Keep popover open for text/number if cleared, otherwise close.
+                  } else {
+                    setIsFilterPopoverOpen(false);
+                  }
                 }}
               />
             </PopoverContent>

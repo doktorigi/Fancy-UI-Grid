@@ -14,6 +14,7 @@ export interface ColumnDefinition<TData = any> {
   hideable?: boolean; // Default true
   editable?: boolean; // Default false
   pinned?: 'left' | 'right' | null; // For column pinning
+  groupable?: boolean; // Default true, whether column can be dragged to grouping panel
   headerRenderer?: () => React.ReactNode;
   defaultWidth?: string | number;
   minWidth?: string | number; // Minimum width for resizing
@@ -73,6 +74,9 @@ export interface ProcessedRow<TData extends HierarchicalData<TData>> {
   level: number;
   hasChildren: boolean;
   isExpanded?: boolean; // Optional, can be derived from expandedRows set
+  isGroupHeader?: boolean; // True if this row is a group header
+  groupKey?: string; // e.g., "City: New York"
+  groupItems?: ProcessedRow<TData>[]; // Items within this group if it's a group header
   // Allow direct access to originalRow properties
   [key: string]: any;
 }
@@ -87,6 +91,7 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   onCellEdit?: (rowId: string | number, field: keyof TData & string, value: any) => void;
   isTreeData?: boolean;
   treeColumn?: keyof TData & string; // Specifies which column shows tree controls
+  enableGroupingPanel?: boolean; // To enable the grouping panel
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {
@@ -99,8 +104,8 @@ export interface DataGridState<TData extends HierarchicalData<TData>> {
   selectedRows: Set<string | number>;
   columnOrder: (keyof TData & string)[];
   columnWidths: Record<keyof TData & string, string | number>;
-  draggedColumn: (keyof TData & string) | null;
-  draggedOverColumn: (keyof TData & string) | null;
+  draggedColumn: (keyof TData & string) | null; // For reordering
+  draggedOverColumn: (keyof TData & string) | null; // For reordering
   editingCell?: { rowId: string | number; field: keyof TData & string } | null;
   editInputValue?: any;
   pinnedColumns: {
@@ -109,5 +114,6 @@ export interface DataGridState<TData extends HierarchicalData<TData>> {
   };
   expandedRows: Set<string | number>; // For tree data
   focusedCell: { rowId: string | number; colField: keyof TData & string } | null; // For keyboard navigation
+  groupedBy: (keyof TData & string)[]; // For column grouping
+  expandedGroups: Set<string>; // Tracks expanded group keys
 }
-
