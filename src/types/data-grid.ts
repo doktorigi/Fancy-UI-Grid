@@ -74,7 +74,7 @@ export interface ProcessedRow<TData extends HierarchicalData<TData>> {
   hasChildren: boolean;
   isExpanded?: boolean; // Optional, can be derived from expandedRows set
   // Allow direct access to originalRow properties
-  [key: string]: any; 
+  [key: string]: any;
 }
 
 
@@ -108,4 +108,6 @@ export interface DataGridState<TData extends HierarchicalData<TData>> {
     right: (keyof TData & string)[];
   };
   expandedRows: Set<string | number>; // For tree data
+  focusedCell: { rowId: string | number; colField: keyof TData & string } | null; // For keyboard navigation
 }
+
