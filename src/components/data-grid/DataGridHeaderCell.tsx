@@ -1,3 +1,4 @@
+
 import * as React from 'react';
 import type { ColumnDefinition, SortConfig, FilterValue, ActiveFilters } from '@/types/data-grid';
 import { Button } from '@/components/ui/button';
@@ -5,8 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { DataGridFilterPopover } from './DataGridFilterPopover';
 import { ArrowDown, ArrowUp, Filter, Users, Mail, CalendarDays, Hash, Edit3, Activity, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Label } from '@/components/ui/label'; // Added Label import
-import { FilterX } from 'lucide-react'; // Added FilterX import
+// Label and FilterX imports removed as their functionality is now fully within DataGridFilterPopover
 
 interface DataGridHeaderCellProps<TData> {
   column: ColumnDefinition<TData>;
@@ -14,7 +14,7 @@ interface DataGridHeaderCellProps<TData> {
   onSort: (field: keyof TData & string) => void;
   onFilterChange: (field: keyof TData & string, value?: FilterValue) => void;
   columnFilters: ActiveFilters<TData>;
-  uniqueColumnValues?: string[];
+  // uniqueColumnValues prop removed
 }
 
 const iconMap: { [key: string]: LucideIcon } = {
@@ -32,7 +32,6 @@ export function DataGridHeaderCell<TData>({
   onSort,
   onFilterChange,
   columnFilters,
-  uniqueColumnValues,
 }: DataGridHeaderCellProps<TData>) {
   const isSorted = sortConfig?.field === column.field;
   const isFiltered = !!columnFilters[column.field];
@@ -46,19 +45,6 @@ export function DataGridHeaderCell<TData>({
   ) : (
     <span className="truncate">{column.headerText}</span>
   );
-
-  const filterPopoverContent = (
-    <DataGridFilterPopover
-      column={column}
-      filterValue={columnFilters[column.field]}
-      onFilterChange={(field, value) => {
-        onFilterChange(field, value);
-        setIsFilterPopoverOpen(false); // Close popover on filter change
-      }}
-      uniqueColumnValues={uniqueColumnValues}
-    />
-  );
-
 
   return (
     <div className="flex items-center justify-between group py-2 pr-2">
@@ -98,27 +84,15 @@ export function DataGridHeaderCell<TData>({
                 <Filter className="h-3.5 w-3.5" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-64 p-0 border-none shadow-none bg-transparent" side="bottom" align="start">
-               <div className="p-4 border rounded-md shadow-lg bg-popover text-popover-foreground">
-                <div className="space-y-4">
-                  <Label className="font-semibold">{column.headerText} Filter</Label>
-                  {/* Directly render the content part of DataGridFilterPopover */}
-                  {(filterPopoverContent.props.children as React.ReactElement)?.props?.children[1]}
-                  {columnFilters[column.field] && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        onFilterChange(column.field, undefined);
-                        setIsFilterPopoverOpen(false);
-                      }}
-                      className="w-full mt-2"
-                    >
-                      <FilterX className="mr-2 h-4 w-4" /> Clear Filter
-                    </Button>
-                  )}
-                </div>
-              </div>
+            <PopoverContent className="w-64 p-4" side="bottom" align="start">
+              <DataGridFilterPopover
+                column={column}
+                filterValue={columnFilters[column.field]}
+                onFilterChange={(field, value) => {
+                  onFilterChange(field, value);
+                  setIsFilterPopoverOpen(false);
+                }}
+              />
             </PopoverContent>
           </Popover>
         )}

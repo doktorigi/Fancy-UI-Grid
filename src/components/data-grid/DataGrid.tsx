@@ -5,8 +5,6 @@ import type {
   ColumnDefinition,
   DataGridProps,
   DataGridState,
-  // SortConfig, // Already in DataGridState
-  // ActiveFilters, // Already in DataGridState
   FilterValue,
 } from '@/types/data-grid';
 import {
@@ -24,9 +22,8 @@ import { DataGridPagination } from './DataGridPagination';
 import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge'; // Import Badge
+import { Badge } from '@/components/ui/badge';
 
-// Helper to get a value from an object, handling nested paths if needed (simplified)
 const getCellValue = <TData,>(row: TData, field: keyof TData & string): any => {
   return row[field];
 };
@@ -57,7 +54,7 @@ export function DataGrid<TData extends { id: string | number }>({
         uniqueValues.add(String(value));
       }
     });
-    return Array.from(uniqueValues);
+    return Array.from(uniqueValues).sort();
   }, [initialData]);
 
   const columnDefs = React.useMemo(() => {
@@ -159,15 +156,22 @@ export function DataGrid<TData extends { id: string | number }>({
       if (!filter) return;
       dataToFilter = dataToFilter.filter((row) => {
         const cellValue = getCellValue(row, field as keyof TData & string);
-        if (cellValue === undefined || cellValue === null) return false;
+        
+        // If cell value is null or undefined, it shouldn't match any filter unless the filter is specifically looking for empty values (not implemented here)
+        if (cellValue === undefined || cellValue === null) {
+             // Allow boolean filters to match if filter value is undefined (meaning "any")
+            if (filter.type === 'boolean' && filter.value === undefined) return true;
+            return false;
+        }
+
 
         switch (filter.type) {
           case 'text':
-            return String(cellValue).toLowerCase().includes(filter.value.toLowerCase());
+            return String(cellValue).toLowerCase().includes(String(filter.value).toLowerCase());
           case 'number':
-            if (filter.value === undefined) return true;
+            if (filter.value === undefined) return true; // No value to filter by
             const numCell = parseFloat(String(cellValue));
-            if (isNaN(numCell)) return false;
+            if (isNaN(numCell)) return false; // Cell value is not a number
             switch (filter.operator) {
               case '=': return numCell === filter.value;
               case '!=': return numCell !== filter.value;
@@ -178,14 +182,24 @@ export function DataGrid<TData extends { id: string | number }>({
               default: return true;
             }
           case 'date':
-            if (!filter.value) return true;
-            const dateCell = new Date(String(cellValue));
-            if (isNaN(dateCell.getTime())) return false;
-            return dateCell.toDateString() === filter.value.toDateString();
+            if (!filter.value) return true; // No date to filter by
+            try {
+              const dateCell = new Date(String(cellValue));
+               if (isNaN(dateCell.getTime())) return false; // Cell value is not a valid date
+              // Normalize both dates to midnight to compare only date part
+              const filterDateNormalized = new Date(filter.value);
+              filterDateNormalized.setHours(0,0,0,0);
+              dateCell.setHours(0,0,0,0);
+              return dateCell.getTime() === filterDateNormalized.getTime();
+            } catch (e) {
+              return false; // Error parsing date
+            }
           case 'select':
             return String(cellValue) === filter.value;
           case 'boolean':
-            return filter.value === undefined ? true : Boolean(cellValue) === filter.value;
+            // If filter.value is undefined, it means "Any", so all rows pass for this filter
+            if (filter.value === undefined) return true;
+            return Boolean(cellValue) === filter.value;
           default:
             return true;
         }
@@ -207,12 +221,14 @@ export function DataGrid<TData extends { id: string | number }>({
       if (typeof valA === 'number' && typeof valB === 'number') {
         return direction === 'asc' ? valA - valB : valB - valA;
       }
+      if (valA instanceof Date && valB instanceof Date) {
+        return direction === 'asc' ? valA.getTime() - valB.getTime() : valB.getTime() - valA.getTime();
+      }
       if (typeof valA === 'string' && typeof valB === 'string') {
         return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
       }
-      if (valA < valB) return direction === 'asc' ? -1 : 1;
-      if (valA > valB) return direction === 'asc' ? 1 : -1;
-      return 0;
+      // Fallback for other types, convert to string for comparison
+      return direction === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
     });
   }, [filteredData, state.sortConfig]);
 
@@ -255,7 +271,11 @@ export function DataGrid<TData extends { id: string | number }>({
       );
     }
     if (col.field === 'registrationDate') {
-      return new Date(String(cellValue)).toLocaleDateString();
+      try {
+        return new Date(String(cellValue)).toLocaleDateString();
+      } catch (e) {
+        return String(cellValue); // Fallback if date is invalid
+      }
     }
     if (col.field === 'progress') {
       return (
@@ -279,6 +299,7 @@ export function DataGrid<TData extends { id: string | number }>({
           value={state.globalFilter}
           onChange={handleGlobalFilterChange}
           className="max-w-xs h-9"
+          aria-label="Global search input"
         />
         <ColumnVisibilityToggle
           allColumns={columnDefs}
@@ -307,7 +328,7 @@ export function DataGrid<TData extends { id: string | number }>({
                     width: col.defaultWidth, 
                     minWidth: col.minWidth || col.defaultWidth || '100px',
                   }}
-                  className="px-3 py-0"
+                  className="px-3 py-0" // Reduced py for header cell internal padding
                 >
                   <DataGridHeaderCell
                     column={col}
@@ -315,7 +336,7 @@ export function DataGrid<TData extends { id: string | number }>({
                     onSort={handleSort}
                     onFilterChange={handleColumnFilterChange}
                     columnFilters={state.columnFilters}
-                    uniqueColumnValues={col.filterType === 'select' && !col.filterOptions ? getUniqueColumnValues(col.field) : undefined}
+                    // uniqueColumnValues prop removed
                   />
                 </TableHead>
               ))}
@@ -335,6 +356,7 @@ export function DataGrid<TData extends { id: string | number }>({
                         checked={state.selectedRows.has(row.id)}
                         onCheckedChange={(checked) => handleSelectRow(row.id, !!checked)}
                         aria-labelledby={`select-row-${row.id}`}
+                        id={`select-row-${row.id}`}
                       />
                     </TableCell>
                   )}
@@ -375,3 +397,4 @@ export function DataGrid<TData extends { id: string | number }>({
     </div>
   );
 }
+
