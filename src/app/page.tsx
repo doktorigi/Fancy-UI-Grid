@@ -215,9 +215,9 @@ export default function Home() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="ml-4 shrink-0">
-                {theme === 'light' && <Sun className="h-[1.2rem] w-[1.2rem] transition-all" />}
-                {theme === 'dark' && <Moon className="h-[1.2rem] w-[1.2rem] transition-all" />}
-                {theme === 'system' && <Laptop className="h-[1.2rem] w-[1.2rem] transition-all" />}
+                {theme === 'light' && <Sun className="h-5 w-5" />}
+                {theme === 'dark' && <Moon className="h-5 w-5" />}
+                {theme === 'system' && <Laptop className="h-5 w-5" />}
                 <span className="sr-only">Toggle theme</span>
               </Button>
             </DropdownMenuTrigger>
@@ -246,7 +246,7 @@ export default function Home() {
         pageSizeOptions={[5, 10, 15, 25, 50]}
         enableRowSelection={true}
         onCellEdit={handleCellEdit}
-        isTreeData={false} 
+        isTreeData={true} 
         treeColumn="firstName"
         enableGroupingPanel={true}
       />

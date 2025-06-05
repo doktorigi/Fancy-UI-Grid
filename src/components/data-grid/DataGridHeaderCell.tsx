@@ -29,7 +29,7 @@ interface DataGridHeaderCellProps<TData> {
   onDragStartColumn: (field: keyof TData & string, event: React.DragEvent) => void; // Generic drag start
 }
 
-const iconMap: { [key: string]: LucideIcon } = {
+const iconMap: { [key: string]: React.ElementType } = {
   Users,
   Mail,
   CalendarDays,
@@ -95,7 +95,7 @@ export function DataGridHeaderCell<TData>({
   return (
     <div 
       className={cn(
-        "flex items-center justify-between group py-2 pr-2 h-full w-full",
+        "flex items-center justify-between group px-3 py-2 h-full w-full", // Changed padding here
         isDraggable && "cursor-grab"
       )}
       style={{ position: 'relative' }} 
