@@ -2,8 +2,22 @@
 import type { LucideIcon } from 'lucide-react';
 
 export type FilterType = 'text' | 'number' | 'date' | 'select' | 'boolean';
-export type NumberFilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=';
-export const numberFilterOperators: NumberFilterOperator[] = ['=', '!=', '<', '>', '<=', '>='];
+export type NumberFilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'between';
+export const numberFilterOperators: NumberFilterOperator[] = ['=', '!=', '<', '>', '<=', '>=', 'between'];
+
+export type DateRangePreset = 'all' | 'today' | 'yesterday' | 'last7days' | 'last30days' | 'thisMonth' | 'lastMonth' | 'custom';
+
+export const dateRangePresetOptions: { label: string; value: DateRangePreset }[] = [
+  { label: 'Any Date', value: 'all' },
+  { label: 'Today', value: 'today' },
+  { label: 'Yesterday', value: 'yesterday' },
+  { label: 'Last 7 Days', value: 'last7days' },
+  { label: 'Last 30 Days', value: 'last30days' },
+  { label: 'This Month', value: 'thisMonth' },
+  { label: 'Last Month', value: 'lastMonth' },
+  { label: 'Custom Range', value: 'custom' },
+];
+
 
 export interface ColumnDefinition<TData = any> {
   field: keyof TData & string;
@@ -38,12 +52,15 @@ export interface TextFilterValue extends BaseFilterValue {
 }
 export interface NumberFilterValue extends BaseFilterValue {
   type: 'number';
-  value?: number;
+  value?: number; // For 'between', this is the lower bound
+  value2?: number; // For 'between', this is the upper bound
   operator: NumberFilterOperator;
 }
 export interface DateFilterValue extends BaseFilterValue {
   type: 'date';
-  value?: Date;
+  preset?: DateRangePreset;
+  value?: Date; // For 'custom' range, this is the start date
+  value2?: Date; // For 'custom' range, this is the end date
 }
 export interface SelectFilterValue extends BaseFilterValue {
   type: 'select';
@@ -75,6 +92,8 @@ export interface ProcessedRow<TData extends HierarchicalData<TData>> {
   hasChildren: boolean;
   isExpanded?: boolean; // Optional, can be derived from expandedRows set
   isGroupHeader?: boolean; // True if this row is a group header
+  groupField?: keyof TData & string; // Field used for grouping if this is a group header
+  groupValue?: any; // Value of the group field if this is a group header
   groupKey?: string; // e.g., "City: New York"
   groupItems?: ProcessedRow<TData>[]; // Items within this group if it's a group header
   // Allow direct access to originalRow properties

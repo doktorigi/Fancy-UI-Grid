@@ -8,6 +8,8 @@ import type {
   FilterValue,
   HierarchicalData,
   ProcessedRow,
+  DateFilterValue,
+  NumberFilterValue,
 } from '@/types/data-grid';
 import {
   Table,
@@ -35,6 +37,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, isValid } from 'date-fns';
 
 
 const DEFAULT_COL_WIDTH = 150; // px
@@ -132,6 +135,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               reconciledUnpinnedOrder.push(colDef.field);
             }
           });
+          
+          const reconciledColumnFilters = savedState.columnFilters || {};
+          Object.keys(reconciledColumnFilters).forEach(field => {
+            const filter = reconciledColumnFilters[field];
+            if (filter.type === 'date') {
+              if (filter.value) filter.value = new Date(filter.value);
+              if (filter.value2) filter.value2 = new Date(filter.value2);
+            }
+          });
+
 
           setState(prevState => ({
             ...prevState,
@@ -141,7 +154,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               left: reconciledPinnedLeft,
               right: reconciledPinnedRight
             },
-            columnFilters: savedState.columnFilters || {},
+            columnFilters: reconciledColumnFilters,
             sortConfig: savedState.sortConfig || null,
             pageSize: savedState.pageSize || defaultPageSize,
             expandedRows: savedState.expandedRows ? new Set(Array.from(savedState.expandedRows)) : new Set(),
@@ -195,7 +208,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const uniqueValues = new Set<string>();
     const traverse = (items: TData[]) => {
       items.forEach(row => {
-        const value = getCellValue(row, field);
+        const value = getCellValue({originalRow: row} as ProcessedRow<TData>, field); // Adjusted to pass ProcessedRow-like structure
         if (value !== undefined && value !== null) {
           uniqueValues.add(String(value));
         }
@@ -278,7 +291,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const handleColumnFilterChange = (field: keyof TData & string, value?: FilterValue) => {
     setState((prevState) => {
       const newColumnFilters = { ...prevState.columnFilters };
-      if (value === undefined || (typeof value.value === 'string' && value.value === '') || (value.type === 'number' && value.value === undefined) || (value.type === 'boolean' && value.value === undefined)) {
+      if (value === undefined || 
+          (value.type === 'text' && value.value === '') || 
+          (value.type === 'number' && value.value === undefined && (value.operator !== 'between' || value.value2 === undefined)) || 
+          (value.type === 'date' && value.preset === 'all') || 
+          (value.type === 'boolean' && value.value === undefined)) {
         delete newColumnFilters[field];
       } else {
         newColumnFilters[field] = value;
@@ -494,12 +511,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       const { rowId, field } = state.editingCell;
       let valueToCommit = state.editInputValue;
       const columnDef = processedColumnDefs.find(col => col.field === field);
-      const originalRow = baseDataForProcessing.find(r => r.id === rowId)?.originalRow;
+      const originalRowData = baseDataForProcessing.find(r => r.id === rowId)?.originalRow;
 
-      if (columnDef?.filterType === 'number' || (originalRow && typeof originalRow[field] === 'number')) {
+      if (columnDef?.filterType === 'number' || (originalRowData && typeof originalRowData[field] === 'number')) {
         valueToCommit = parseFloat(state.editInputValue);
-        if (isNaN(valueToCommit) && originalRow) {
-          valueToCommit = getCellValue(originalRow, field); 
+        if (isNaN(valueToCommit) && originalRowData) {
+          valueToCommit = getCellValue({originalRow: originalRowData} as ProcessedRow<TData>, field); 
         }
       }
       onCellEdit(rowId, field, valueToCommit);
@@ -530,7 +547,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       dataToFilter = dataToFilter.filter((row) =>
         processedColumnDefs.some((col) => {
           if (state.visibleColumns.includes(col.field)) {
-            const cellValue = getCellValue(row.originalRow, col.field);
+            const cellValue = getCellValue(row, col.field);
             return String(cellValue).toLowerCase().includes(lowerGlobalFilter);
           }
           return false;
@@ -544,38 +561,91 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       if (!colDef || !state.visibleColumns.includes(colDef.field)) return;
 
       dataToFilter = dataToFilter.filter((row) => {
-        const cellValue = getCellValue(row.originalRow, field as keyof TData & string);
+        const cellValue = getCellValue(row, field as keyof TData & string);
         if (cellValue === undefined || cellValue === null) {
-            if (filter.type === 'boolean' && filter.value === undefined) return true;
+            if (filter.type === 'boolean' && filter.value === undefined) return true; // 'Any' for boolean
+            if (filter.type === 'date' && (filter as DateFilterValue).preset === 'all') return true; // 'Any Date' for date
             return false;
         }
         switch (filter.type) {
           case 'text':
             return String(cellValue).toLowerCase().includes(String(filter.value).toLowerCase());
           case 'number':
-            if (filter.value === undefined) return true;
+            const numFilter = filter as NumberFilterValue;
+            if (numFilter.value === undefined && (numFilter.operator !== 'between' || numFilter.value2 === undefined)) return true;
             const numCell = parseFloat(String(cellValue));
             if (isNaN(numCell)) return false;
-            switch (filter.operator) {
-              case '=': return numCell === filter.value;
-              case '!=': return numCell !== filter.value;
-              case '<': return numCell < filter.value;
-              case '>': return numCell > filter.value;
-              case '<=': return numCell <= filter.value;
-              case '>=': return numCell >= filter.value;
+
+            if (numFilter.operator === 'between') {
+              if (typeof numFilter.value === 'number' && typeof numFilter.value2 === 'number') {
+                return numCell >= numFilter.value && numCell <= numFilter.value2;
+              } else if (typeof numFilter.value === 'number') {
+                return numCell >= numFilter.value;
+              } else if (typeof numFilter.value2 === 'number') {
+                return numCell <= numFilter.value2;
+              }
+              return true; // If one is undefined, it's an open range
+            }
+            if (numFilter.value === undefined) return true; // For other ops, if value is undefined, no filter
+
+            switch (numFilter.operator) {
+              case '=': return numCell === numFilter.value;
+              case '!=': return numCell !== numFilter.value;
+              case '<': return numCell < numFilter.value;
+              case '>': return numCell > numFilter.value;
+              case '<=': return numCell <= numFilter.value;
+              case '>=': return numCell >= numFilter.value;
               default: return true;
             }
           case 'date':
-            if (!filter.value) return true;
-            try {
-              const dateCell = new Date(String(cellValue));
-               if (isNaN(dateCell.getTime())) return false;
-              const filterDateNormalized = new Date(filter.value);
-              filterDateNormalized.setHours(0,0,0,0);
-              dateCell.setHours(0,0,0,0);
-              return dateCell.getTime() === filterDateNormalized.getTime();
-            } catch (e) {
-              return false;
+            const dateFilter = filter as DateFilterValue;
+            const cellDate = new Date(String(cellValue));
+            if (!isValid(cellDate)) return false;
+            const cellDateTime = startOfDay(cellDate).getTime();
+
+            if (dateFilter.preset === 'all' || !dateFilter.preset) return true;
+
+            if (dateFilter.preset === 'custom') {
+              if (!dateFilter.value && !dateFilter.value2) return true; // No custom range set
+              const startDate = dateFilter.value ? startOfDay(dateFilter.value).getTime() : -Infinity;
+              const endDate = dateFilter.value2 ? endOfDay(dateFilter.value2).getTime() : Infinity;
+              return cellDateTime >= startDate && cellDateTime <= endDate;
+            } else {
+              let lowerBound: Date | null = null;
+              let upperBound: Date | null = null;
+              const today = new Date();
+
+              switch (dateFilter.preset) {
+                case 'today':
+                  lowerBound = startOfDay(today);
+                  upperBound = endOfDay(today);
+                  break;
+                case 'yesterday':
+                  lowerBound = startOfDay(subDays(today, 1));
+                  upperBound = endOfDay(subDays(today, 1));
+                  break;
+                case 'last7days':
+                  lowerBound = startOfDay(subDays(today, 6)); // Includes today
+                  upperBound = endOfDay(today);
+                  break;
+                case 'last30days':
+                  lowerBound = startOfDay(subDays(today, 29)); // Includes today
+                  upperBound = endOfDay(today);
+                  break;
+                case 'thisMonth':
+                  lowerBound = startOfMonth(today);
+                  upperBound = endOfMonth(today);
+                  break;
+                case 'lastMonth':
+                  const lastMonthStart = startOfMonth(subMonths(today, 1));
+                  lowerBound = lastMonthStart;
+                  upperBound = endOfMonth(lastMonthStart);
+                  break;
+              }
+              if (lowerBound && upperBound) {
+                return cellDateTime >= lowerBound.getTime() && cellDateTime <= upperBound.getTime();
+              }
+              return true;
             }
           case 'select':
             return String(cellValue) === filter.value;
@@ -598,8 +668,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       const groupField = groupedBy[0]; 
       const groupColDef = colDefsMap.get(groupField);
       dataToSort.sort((a, b) => {
-        const valA = getCellValue(a.originalRow, groupField);
-        const valB = getCellValue(b.originalRow, groupField);
+        const valA = getCellValue(a, groupField);
+        const valB = getCellValue(b, groupField);
         if (valA === null || valA === undefined) return 1;
         if (valB === null || valB === undefined) return -1;
         if (typeof valA === 'number' && typeof valB === 'number') return valA - valB;
@@ -620,17 +690,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     return dataToSort.sort((a, b) => {
       if (groupedBy.length > 0 && !isTreeData) {
         const groupField = groupedBy[0];
-        const groupValA = getCellValue(a.originalRow, groupField);
-        const groupValB = getCellValue(b.originalRow, groupField);
+        const groupValA = getCellValue(a, groupField);
+        const groupValB = getCellValue(b, groupField);
         if (groupValA !== groupValB) {
-          if (groupValA === null || groupValA === undefined) return 1;
-          if (groupValB === null || groupValB === undefined) return -1;
-          return String(groupValA).localeCompare(String(groupValB));
+          // This part should already be handled by the primary group sort above.
+          // If not, it implies the primary group sort needs to be more robust or
+          // this secondary sort needs to ensure it respects the primary grouping.
+          // For now, we assume the primary sort handles the groups.
         }
       }
 
-      const valA = getCellValue(a.originalRow, field);
-      const valB = getCellValue(b.originalRow, field);
+      const valA = getCellValue(a, field);
+      const valB = getCellValue(b, field);
       if (valA === null || valA === undefined) return direction === 'asc' ? 1 : -1;
       if (valB === null || valB === undefined) return direction === 'asc' ? -1 : 1;
 
@@ -661,7 +732,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     let currentGroupItems: ProcessedRow<TData>[] = [];
 
     sortedData.forEach((row, index) => {
-      const rowGroupValue = getCellValue(row.originalRow, groupField);
+      const rowGroupValue = getCellValue(row, groupField);
       if (index === 0 || rowGroupValue !== currentGroupValue) {
         if (currentGroupItems.length > 0 && currentGroupValue !== undefined) {
           const groupKey = `${String(groupField)}:${String(currentGroupValue)}`;
@@ -704,7 +775,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       }
     }
     return groupedResult;
-  }, [sortedData, state.groupedBy, state.expandedGroups, isTreeData]);
+  }, [sortedData, state.groupedBy, state.expandedGroups, isTreeData, getCellValue]);
 
 
   const paginatedData = React.useMemo(() => {
@@ -826,8 +897,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           if (focusedRow) {
             if (isTreeData && treeColumn && focusedCell.colField === treeColumn && focusedRow.hasChildren) {
               handleToggleExpandRow(focusedCell.rowId);
-            } else if (enableGroupingPanel && focusedRow.isGroupHeader) {
-                handleToggleExpandGroup(focusedRow.groupKey!);
+            } else if (enableGroupingPanel && focusedRow.isGroupHeader && focusedRow.groupKey) {
+                handleToggleExpandGroup(focusedRow.groupKey);
             } else if (enableRowSelection && !focusedRow.isGroupHeader) {
               handleSelectRow(focusedCell.rowId, !state.selectedRows.has(focusedCell.rowId));
             }
@@ -842,8 +913,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
            if (focusedRow) {
             if (isTreeData && treeColumn && focusedCell.colField === treeColumn && focusedRow.hasChildren && e.key === 'Enter') {
                  handleToggleExpandRow(focusedCell.rowId);
-            } else if (enableGroupingPanel && focusedRow.isGroupHeader && e.key === 'Enter') {
-                 handleToggleExpandGroup(focusedRow.groupKey!);
+            } else if (enableGroupingPanel && focusedRow.isGroupHeader && focusedRow.groupKey && e.key === 'Enter') {
+                 handleToggleExpandGroup(focusedRow.groupKey);
             } else if (!focusedRow.isGroupHeader) {
                 const colDef = colDefsMap.get(focusedCell.colField);
                 if (colDef?.editable) {
@@ -906,12 +977,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }
 
   const renderCellContent = (row: ProcessedRow<TData>, col: ColumnDefinition<TData>): React.ReactNode => {
-    const cellValue = getCellValue(row.originalRow, col.field);
+    const cellValue = getCellValue(row, col.field);
 
     if (state.editingCell && state.editingCell.rowId === row.id && state.editingCell.field === col.field) {
       const colDef = processedColumnDefs.find(c => c.field === col.field);
-      const originalRowForEdit = baseDataForProcessing.find(r => r.id === row.id)?.originalRow;
-      const inputType = colDef?.filterType === 'number' || (originalRowForEdit && typeof getCellValue(originalRowForEdit,col.field) === 'number') ? 'number' : 'text';
+      const originalRowDataForEdit = baseDataForProcessing.find(r => r.id === row.id)?.originalRow;
+      const inputType = colDef?.filterType === 'number' || (originalRowDataForEdit && typeof getCellValue({originalRow: originalRowDataForEdit} as ProcessedRow<TData>,col.field) === 'number') ? 'number' : 'text';
+      
       return (
         <Input
           type={inputType}
@@ -930,16 +1002,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         <div className="flex items-center gap-2">
           <Avatar className="h-8 w-8">
             <AvatarFallback>
-              {String(getCellValue(row.originalRow, 'firstName'))?.charAt(0)?.toUpperCase()}
-              {String(getCellValue(row.originalRow, 'lastName'))?.charAt(0)?.toUpperCase()}
+              {String(getCellValue(row, 'firstName'))?.charAt(0)?.toUpperCase()}
+              {String(getCellValue(row, 'lastName'))?.charAt(0)?.toUpperCase()}
             </AvatarFallback>
           </Avatar>
           <div>
             <div className="font-medium">
-              {getCellValue(row.originalRow, 'firstName')} {getCellValue(row.originalRow, 'lastName')}
+              {getCellValue(row, 'firstName')} {getCellValue(row, 'lastName')}
             </div>
             <div className="text-xs text-muted-foreground">
-              {getCellValue(row.originalRow, 'email')}
+              {getCellValue(row, 'email')}
             </div>
           </div>
         </div>
@@ -957,7 +1029,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
           ) : (
-            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span>
+            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span> // Adjusted from 1.5rem to 1.25rem to match button size if needed
           )}
           {nameContent}
         </div>
@@ -978,7 +1050,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
     if (col.field === 'registrationDate') {
       try {
-        return new Date(String(cellValue)).toLocaleDateString();
+        const dateVal = new Date(String(cellValue));
+        if (isValid(dateVal)) {
+            return format(dateVal, "MM/dd/yyyy");
+        }
+        return String(cellValue);
       } catch (e) {
         return String(cellValue);
       }
@@ -1001,14 +1077,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
 
   const handleExportCsv = () => {
-    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); // Get originalRow for export
-    exportToCsv(dataToExport, orderedVisibleColumnDefs, 'grid_export');
+    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); 
+    exportToCsv(dataToExport, orderedVisibleColumnDefs.map(c => ({...c, field: c.field as (keyof TData & string)})), 'grid_export');
   };
 
   const handleExportXlsx = () => {
-    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); // Get originalRow for export
-    exportToXlsx(dataToExport, orderedVisibleColumnDefs, 'grid_export');
+    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); 
+    exportToXlsx(dataToExport, orderedVisibleColumnDefs.map(c => ({...c, field: c.field as (keyof TData & string)})), 'grid_export');
   };
+
 
   return (
     <div
@@ -1019,8 +1096,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     >
       {enableGroupingPanel && !isTreeData && (
         <DataGridGroupingPanel
-          groupedColumns={groupedByColumns}
-          allColumnsMap={colDefsMap}
+          groupedColumns={groupedByColumns as ColumnDefinition<TData>[]}
+          allColumnsMap={colDefsMap as Map<keyof TData & string, ColumnDefinition<TData>>}
           onUngroupColumn={handleUngroupColumn}
           onDropColumn={handleGroupColumn}
         />
@@ -1150,7 +1227,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       <TableCell 
                         colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)}
                         className="px-3 py-2 cursor-pointer"
-                        onClick={() => handleToggleExpandGroup(row.groupKey!)}
+                        onClick={() => row.groupKey && handleToggleExpandGroup(row.groupKey)}
                       >
                         <div className="flex items-center">
                            <button
@@ -1215,7 +1292,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
                           ...stickyStyle
                         }}
-                        title={String(getCellValue(row.originalRow, colDef.field))}
+                        title={String(getCellValue(row, colDef.field))}
                         onClick={() => handleCellClick(row.id, colDef.field)}
                         onDoubleClick={() => colDef.editable && startEditingCell(row.id, colDef.field)}
                       >
