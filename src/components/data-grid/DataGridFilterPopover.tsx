@@ -15,7 +15,6 @@ interface DataGridFilterPopoverProps<TData> {
   column: ColumnDefinition<TData>;
   filterValue?: FilterValue;
   onFilterChange: (field: keyof TData & string, value?: FilterValue) => void;
-  // uniqueColumnValues prop removed as DataGrid now populates column.filterOptions
 }
 
 export function DataGridFilterPopover<TData>({
@@ -118,10 +117,10 @@ export function DataGridFilterPopover<TData>({
             }
           >
             <SelectTrigger className="w-full" aria-label={`${column.headerText} select filter`}>
-              <SelectValue placeholder={`Select ${column.headerText}`} />
+              <SelectValue placeholder={`Any ${column.headerText}`} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Any</SelectItem>
+              {/* <SelectItem value="">Any</SelectItem> Removed this line */}
               {options.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
@@ -150,7 +149,7 @@ export function DataGridFilterPopover<TData>({
               <SelectValue placeholder="Any" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Any</SelectItem>
+              {/* <SelectItem value="">Any</SelectItem> Removed this line */}
               <SelectItem value="true">Yes</SelectItem>
               <SelectItem value="false">No</SelectItem>
             </SelectContent>
@@ -171,7 +170,7 @@ export function DataGridFilterPopover<TData>({
       <div id={column.field + "-filter-label"}>
         {renderFilterContent()}
       </div>
-      {filterValue && (
+      {filterValue && (typeof filterValue.value !== 'undefined' || (filterValue.type === 'number' && typeof filterValue.operator !== 'undefined')) && (
         <Button
           variant="outline"
           size="sm"
