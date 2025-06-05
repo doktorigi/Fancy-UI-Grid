@@ -32,6 +32,7 @@ const getCellValue = <TData, PRow extends { originalRow: TData }>(row: PRow, fie
 };
 
 const DEFAULT_COL_WIDTH = 150; // px
+const LOCAL_STORAGE_KEY = 'ngxMatDataGridState';
 
 export function DataGrid<TData extends HierarchicalData<TData>>({
   data: initialData,
@@ -43,23 +44,26 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   isTreeData = false,
   treeColumn: specifiedTreeColumn,
 }: DataGridProps<TData>) {
+  
   const [state, setState] = React.useState<DataGridState<TData>>(() => {
     const defaultWidths: Record<keyof TData & string, string | number> = {};
-    const initialPinnedLeft: (keyof TData & string)[] = [];
-    const initialPinnedRight: (keyof TData & string)[] = [];
-    const initialColumnOrder = initialColumnDefs.map(col => col.field);
+    const initialPinnedLeftFromDefs: (keyof TData & string)[] = [];
+    const initialPinnedRightFromDefs: (keyof TData & string)[] = [];
+    // Ensure initialColumnOrderFromDefs contains all fields, even if not explicitly pinned
+    const allFieldsFromDefs = initialColumnDefs.map(col => col.field);
+    const initialVisibleColumnsFromDefs = initialColumnDefs.map(col => col.field);
 
     initialColumnDefs.forEach(col => {
       defaultWidths[col.field] = col.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
       if (col.pinned === 'left') {
-        initialPinnedLeft.push(col.field);
+        initialPinnedLeftFromDefs.push(col.field);
       } else if (col.pinned === 'right') {
-        initialPinnedRight.push(col.field);
+        initialPinnedRightFromDefs.push(col.field);
       }
     });
     
-    const unpinnedColumnOrder = initialColumnOrder.filter(
-      field => !initialPinnedLeft.includes(field) && !initialPinnedRight.includes(field)
+    const unpinnedColumnOrderFromDefs = allFieldsFromDefs.filter(
+      field => !initialPinnedLeftFromDefs.includes(field) && !initialPinnedRightFromDefs.includes(field)
     );
 
     return {
@@ -68,18 +72,114 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       sortConfig: null,
       globalFilter: '',
       columnFilters: {},
-      visibleColumns: initialColumnDefs.map((col) => col.field),
+      visibleColumns: initialVisibleColumnsFromDefs,
       selectedRows: new Set<string | number>(),
-      columnOrder: unpinnedColumnOrder,
+      columnOrder: unpinnedColumnOrderFromDefs,
       columnWidths: defaultWidths,
       draggedColumn: null,
       draggedOverColumn: null,
       editingCell: null,
       editInputValue: '',
-      pinnedColumns: { left: initialPinnedLeft, right: initialPinnedRight },
+      pinnedColumns: { left: initialPinnedLeftFromDefs, right: initialPinnedRightFromDefs },
       expandedRows: new Set<string | number>(),
     };
   });
+
+  // Load state from localStorage on mount
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedStateString = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (savedStateString) {
+        try {
+          const savedState = JSON.parse(savedStateString);
+          
+          const currentFieldsSet = new Set(initialColumnDefs.map(col => col.field));
+
+          // Reconcile visibleColumns
+          let reconciledVisibleColumns = (savedState.visibleColumns || [])
+            .filter((field: keyof TData & string) => currentFieldsSet.has(field));
+          initialColumnDefs.forEach(col => {
+            if (!reconciledVisibleColumns.includes(col.field) && col.hideable !== false) { // Ensure new columns are visible by default if hideable
+               // reconciledVisibleColumns.push(col.field); // Default for new columns would be visible
+            } else if (col.hideable === false && !reconciledVisibleColumns.includes(col.field)) {
+               reconciledVisibleColumns.push(col.field); // Ensure non-hideable columns are always visible
+            }
+          });
+          if (reconciledVisibleColumns.length === 0 && initialColumnDefs.length > 0) {
+             reconciledVisibleColumns = initialColumnDefs.map(col => col.field);
+          }
+
+
+          // Reconcile columnOrder for unpinned columns
+          let reconciledUnpinnedOrder = (savedState.columnOrder || [])
+            .filter((field: keyof TData & string) => currentFieldsSet.has(field) && 
+                                                 !savedState.pinnedColumns?.left?.includes(field) &&
+                                                 !savedState.pinnedColumns?.right?.includes(field));
+          
+          const reconciledPinnedLeft = (savedState.pinnedColumns?.left || [])
+            .filter((field: keyof TData & string) => currentFieldsSet.has(field));
+          const reconciledPinnedRight = (savedState.pinnedColumns?.right || [])
+            .filter((field: keyof TData & string) => currentFieldsSet.has(field));
+
+          // Add any new unpinned columns from initialColumnDefs that are not in reconciled orders
+          initialColumnDefs.forEach(colDef => {
+            if (!reconciledPinnedLeft.includes(colDef.field) && 
+                !reconciledPinnedRight.includes(colDef.field) &&
+                !reconciledUnpinnedOrder.includes(colDef.field)) {
+              reconciledUnpinnedOrder.push(colDef.field);
+            }
+          });
+
+
+          setState(prevState => ({
+            ...prevState,
+            columnWidths: { ...prevState.columnWidths, ...(savedState.columnWidths || {}) },
+            columnOrder: reconciledUnpinnedOrder,
+            pinnedColumns: { 
+              left: reconciledPinnedLeft, 
+              right: reconciledPinnedRight 
+            },
+            columnFilters: savedState.columnFilters || {},
+            sortConfig: savedState.sortConfig || null,
+            pageSize: savedState.pageSize || defaultPageSize,
+            expandedRows: savedState.expandedRows ? new Set(savedState.expandedRows) : new Set(),
+            visibleColumns: reconciledVisibleColumns.length > 0 ? reconciledVisibleColumns : prevState.visibleColumns,
+            currentPage: 1, 
+          }));
+        } catch (error) {
+          console.error("Error loading saved grid state from localStorage:", error);
+        }
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount
+
+  // Save state to localStorage on change
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stateToSave = {
+        columnWidths: state.columnWidths,
+        columnOrder: state.columnOrder,
+        pinnedColumns: state.pinnedColumns,
+        columnFilters: state.columnFilters,
+        sortConfig: state.sortConfig,
+        pageSize: state.pageSize,
+        expandedRows: Array.from(state.expandedRows),
+        visibleColumns: state.visibleColumns,
+      };
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+    }
+  }, [
+    state.columnWidths,
+    state.columnOrder,
+    state.pinnedColumns,
+    state.columnFilters,
+    state.sortConfig,
+    state.pageSize,
+    state.expandedRows,
+    state.visibleColumns,
+  ]);
+
 
   const treeColumn = specifiedTreeColumn || (initialColumnDefs.length > 0 ? initialColumnDefs[0].field : undefined);
 
@@ -89,7 +189,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     
     const traverse = (items: TData[]) => {
       items.forEach(row => {
-        const value = (row as any)[field]; // Access original row directly
+        const value = (row as any)[field]; 
         if (value !== undefined && value !== null) {
           uniqueValues.add(String(value));
         }
@@ -131,7 +231,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         level, 
         hasChildren, 
         isExpanded,
-        ...item // Spread item properties for direct access if needed, careful with overrides
+        ...item 
       });
       if (hasChildren && isExpanded && item.children) {
         flatList = flatList.concat(flattenTreeData(item.children, expandedRows, level + 1));
@@ -145,7 +245,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     if (isTreeData) {
       return flattenTreeData(initialData || [], state.expandedRows);
     }
-    // Wrap non-tree data in a similar structure for consistent processing
     return (initialData || []).map(item => ({
       originalRow: item,
       id: item.id,
@@ -230,7 +329,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       } else {
         newExpandedRows.add(rowId);
       }
-      return { ...prevState, expandedRows: newExpandedRows, currentPage: 1 }; // Reset to page 1 on expand/collapse
+      return { ...prevState, expandedRows: newExpandedRows, currentPage: 1 }; 
     });
   };
 
@@ -294,31 +393,38 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     setState(prevState => ({ ...prevState, draggedColumn: null, draggedOverColumn: null }));
   };
 
-  const handlePinColumn = (field: keyof TData & string, position: 'left' | 'right' | null) => {
+  const handlePinColumn = (fieldToPin: keyof TData & string, position: 'left' | 'right' | null) => {
     setState(prevState => {
-      const newPinnedLeft = [...prevState.pinnedColumns.left.filter(f => f !== field)];
-      const newPinnedRight = [...prevState.pinnedColumns.right.filter(f => f !== field)];
-      let newColumnOrder = [...prevState.columnOrder.filter(f => f !== field)];
-
+      let newPinnedLeft = [...prevState.pinnedColumns.left.filter(f => f !== fieldToPin)];
+      let newPinnedRight = [...prevState.pinnedColumns.right.filter(f => f !== fieldToPin)];
+      let newColumnOrder = [...prevState.columnOrder.filter(f => f !== fieldToPin)];
+  
       if (position === 'left') {
-        newPinnedLeft.push(field);
+        // If field was in right pinned, remove it
+        newPinnedRight = newPinnedRight.filter(f => f !== fieldToPin);
+        // Add to left pinned (ensure no duplicates, though filter should handle it)
+        if (!newPinnedLeft.includes(fieldToPin)) newPinnedLeft.push(fieldToPin);
       } else if (position === 'right') {
-        newPinnedRight.push(field);
-      } else { 
-        if (!newColumnOrder.includes(field)) {
-            const originalDef = initialColumnDefs.find(c => c.field === field);
-            const originalIndex = initialColumnDefs.findIndex(c => c.field === field);
-            // Attempt to insert at original relative position among unpinned columns
+        // If field was in left pinned, remove it
+        newPinnedLeft = newPinnedLeft.filter(f => f !== fieldToPin);
+        // Add to right pinned
+        if (!newPinnedRight.includes(fieldToPin)) newPinnedRight.push(fieldToPin);
+      } else { // Unpinning
+        // If it was pinned, ensure it's added back to columnOrder if not already there
+        // (it should have been removed from columnOrder when pinned)
+        if (!newColumnOrder.includes(fieldToPin)) {
+            // Try to insert it back to a sensible position, e.g., based on initialColumnDefs
+            const originalDefIndex = initialColumnDefs.findIndex(c => c.field === fieldToPin);
             let insertAtIndex = newColumnOrder.length; 
-            for (let i = originalIndex + 1; i < initialColumnDefs.length; i++) {
-                const nextOriginalCol = initialColumnDefs[i].field;
-                const idxInOrder = newColumnOrder.indexOf(nextOriginalCol);
-                if (idxInOrder !== -1) {
-                    insertAtIndex = idxInOrder;
+            for (let i = 0; i < newColumnOrder.length; i++) {
+                const currentFieldInOrder = newColumnOrder[i];
+                const originalIndexOfCurrent = initialColumnDefs.findIndex(c => c.field === currentFieldInOrder);
+                if (originalDefIndex < originalIndexOfCurrent) {
+                    insertAtIndex = i;
                     break;
                 }
             }
-             newColumnOrder.splice(insertAtIndex, 0, field);
+            newColumnOrder.splice(insertAtIndex, 0, fieldToPin);
         }
       }
       return {
@@ -396,6 +502,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
     Object.entries(state.columnFilters).forEach(([field, filter]) => {
       if (!filter) return;
+      const colDef = processedColumnDefs.find(c => c.field === (field as keyof TData & string));
+      if (!colDef || !state.visibleColumns.includes(colDef.field)) return; // Skip filter if column is not visible or not defined
+
       dataToFilter = dataToFilter.filter((row) => {
         const cellValue = getCellValue(row, field as keyof TData & string);
         if (cellValue === undefined || cellValue === null) {
@@ -446,6 +555,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const sortedData = React.useMemo(() => {
     if (!state.sortConfig) return filteredData;
     const { field, direction } = state.sortConfig;
+    const colDef = processedColumnDefs.find(c => c.field === field);
+    if (!colDef) return filteredData; // Do not sort if column definition not found
+
+
     return [...filteredData].sort((a, b) => {
       const valA = getCellValue(a, field);
       const valB = getCellValue(b, field);
@@ -455,8 +568,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       if (typeof valA === 'number' && typeof valB === 'number') {
         return direction === 'asc' ? valA - valB : valB - valA;
       }
-      // Attempt to parse as date if column type hints at it or values look like dates
-      const colDef = processedColumnDefs.find(c => c.field === field);
       if (colDef?.filterType === 'date' || (String(valA).match(/^\d{4}-\d{2}-\d{2}/) && String(valB).match(/^\d{4}-\d{2}-\d{2}/))) {
         const dateA = new Date(String(valA)).getTime();
         const dateB = new Date(String(valB)).getTime();
@@ -590,13 +701,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       return String(cellValue);
     })();
 
-    if (isTreeData && col.field === treeColumn) {
+    if (isTreeData && treeColumn && col.field === treeColumn) {
       return (
         <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
           {row.hasChildren ? (
             <button
               onClick={(e) => {
-                e.stopPropagation(); // Prevent row selection/other cell events
+                e.stopPropagation(); 
                 handleToggleExpandRow(row.id);
               }}
               className="mr-1 p-0.5 rounded hover:bg-accent focus:outline-none"
@@ -605,7 +716,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
           ) : (
-            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span> // Placeholder for alignment
+            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span> 
           )}
           {content}
         </div>
@@ -793,3 +904,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     </div>
   );
 }
+
+
+    
