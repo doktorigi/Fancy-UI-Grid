@@ -30,19 +30,29 @@ const getCellValue = <TData,>(row: TData, field: keyof TData & string): any => {
 
 export function DataGrid<TData extends { id: string | number }>({
   data: initialData,
-  columnDefs: initialColumnDefs,
+  columnDefs: initialColumnDefs, // Renamed to avoid conflict with memoized columnDefs
   defaultPageSize = 10,
   pageSizeOptions = [10, 25, 50, 100],
   enableRowSelection = true,
 }: DataGridProps<TData>) {
-  const [state, setState] = React.useState<DataGridState<TData>>({
-    currentPage: 1,
-    pageSize: defaultPageSize,
-    sortConfig: null,
-    globalFilter: '',
-    columnFilters: {},
-    visibleColumns: initialColumnDefs.map((col) => col.field),
-    selectedRows: new Set<string | number>(),
+  const [state, setState] = React.useState<DataGridState<TData>>(() => {
+    const defaultWidths: Record<keyof TData & string, string | number> = {};
+    initialColumnDefs.forEach(col => {
+      defaultWidths[col.field] = col.defaultWidth || '150px';
+    });
+    return {
+      currentPage: 1,
+      pageSize: defaultPageSize,
+      sortConfig: null,
+      globalFilter: '',
+      columnFilters: {},
+      visibleColumns: initialColumnDefs.map((col) => col.field),
+      selectedRows: new Set<string | number>(),
+      columnOrder: initialColumnDefs.map(col => col.field),
+      columnWidths: defaultWidths,
+      draggedColumn: null,
+      draggedOverColumn: null,
+    };
   });
 
   const getUniqueColumnValues = React.useCallback((field: keyof TData & string): string[] => {
@@ -57,7 +67,8 @@ export function DataGrid<TData extends { id: string | number }>({
     return Array.from(uniqueValues).sort();
   }, [initialData]);
 
-  const columnDefs = React.useMemo(() => {
+  // This processes initialColumnDefs to add filterOptions for select filters
+  const processedColumnDefs = React.useMemo(() => {
     return initialColumnDefs.map(colDef => {
       if (colDef.filterable && colDef.filterType === 'select' && !colDef.filterOptions) {
         return {
@@ -68,6 +79,7 @@ export function DataGrid<TData extends { id: string | number }>({
       return colDef;
     });
   }, [initialColumnDefs, getUniqueColumnValues]);
+
 
   const handleSort = (field: keyof TData & string) => {
     setState((prevState) => {
@@ -134,6 +146,62 @@ export function DataGrid<TData extends { id: string | number }>({
     });
   };
 
+  const handleColumnWidthChange = (field: keyof TData & string, newWidth: number) => {
+    setState(prevState => ({
+      ...prevState,
+      columnWidths: {
+        ...prevState.columnWidths,
+        [field]: `${newWidth}px`,
+      }
+    }));
+  };
+
+  const handleDragStart = (field: keyof TData & string, event: React.DragEvent) => {
+    event.dataTransfer.setData('text/plain', field);
+    // Add a class to body to disable text selection cursor while dragging
+    document.body.classList.add('dragging');
+    setState(prevState => ({ ...prevState, draggedColumn: field }));
+  };
+  
+  const handleDragOver = (event: React.DragEvent, targetField: keyof TData & string) => {
+    event.preventDefault(); // Necessary to allow drop
+    if (state.draggedColumn && state.draggedColumn !== targetField) {
+      setState(prevState => ({ ...prevState, draggedOverColumn: targetField }));
+    }
+  };
+
+  const handleDragLeave = () => {
+    setState(prevState => ({ ...prevState, draggedOverColumn: null }));
+  };
+  
+  const handleDrop = (targetField: keyof TData & string, event: React.DragEvent) => {
+    event.preventDefault();
+    document.body.classList.remove('dragging');
+    const sourceField = state.draggedColumn;
+  
+    if (sourceField && sourceField !== targetField) {
+      setState(prevState => {
+        const newColumnOrder = [...prevState.columnOrder];
+        const sourceIndex = newColumnOrder.indexOf(sourceField);
+        const targetIndex = newColumnOrder.indexOf(targetField);
+  
+        if (sourceIndex > -1 && targetIndex > -1) {
+          // Remove source and insert at target
+          const [removed] = newColumnOrder.splice(sourceIndex, 1);
+          newColumnOrder.splice(targetIndex, 0, removed);
+        }
+        return { ...prevState, columnOrder: newColumnOrder, draggedColumn: null, draggedOverColumn: null };
+      });
+    } else {
+       setState(prevState => ({ ...prevState, draggedColumn: null, draggedOverColumn: null }));
+    }
+  };
+  
+  const handleDragEnd = () => {
+    document.body.classList.remove('dragging');
+    setState(prevState => ({ ...prevState, draggedColumn: null, draggedOverColumn: null }));
+  };
+
 
   const filteredData = React.useMemo(() => {
     if (!initialData) return [];
@@ -142,7 +210,7 @@ export function DataGrid<TData extends { id: string | number }>({
     if (state.globalFilter) {
       const lowerGlobalFilter = state.globalFilter.toLowerCase();
       dataToFilter = dataToFilter.filter((row) =>
-        columnDefs.some((col) => {
+        processedColumnDefs.some((col) => { // Use processedColumnDefs here
           if (state.visibleColumns.includes(col.field)) {
             const cellValue = getCellValue(row, col.field);
             return String(cellValue).toLowerCase().includes(lowerGlobalFilter);
@@ -156,22 +224,17 @@ export function DataGrid<TData extends { id: string | number }>({
       if (!filter) return;
       dataToFilter = dataToFilter.filter((row) => {
         const cellValue = getCellValue(row, field as keyof TData & string);
-        
-        // If cell value is null or undefined, it shouldn't match any filter unless the filter is specifically looking for empty values (not implemented here)
         if (cellValue === undefined || cellValue === null) {
-             // Allow boolean filters to match if filter value is undefined (meaning "any")
             if (filter.type === 'boolean' && filter.value === undefined) return true;
             return false;
         }
-
-
         switch (filter.type) {
           case 'text':
             return String(cellValue).toLowerCase().includes(String(filter.value).toLowerCase());
           case 'number':
-            if (filter.value === undefined) return true; // No value to filter by
+            if (filter.value === undefined) return true;
             const numCell = parseFloat(String(cellValue));
-            if (isNaN(numCell)) return false; // Cell value is not a number
+            if (isNaN(numCell)) return false;
             switch (filter.operator) {
               case '=': return numCell === filter.value;
               case '!=': return numCell !== filter.value;
@@ -182,22 +245,20 @@ export function DataGrid<TData extends { id: string | number }>({
               default: return true;
             }
           case 'date':
-            if (!filter.value) return true; // No date to filter by
+            if (!filter.value) return true;
             try {
               const dateCell = new Date(String(cellValue));
-               if (isNaN(dateCell.getTime())) return false; // Cell value is not a valid date
-              // Normalize both dates to midnight to compare only date part
+               if (isNaN(dateCell.getTime())) return false;
               const filterDateNormalized = new Date(filter.value);
               filterDateNormalized.setHours(0,0,0,0);
               dateCell.setHours(0,0,0,0);
               return dateCell.getTime() === filterDateNormalized.getTime();
             } catch (e) {
-              return false; // Error parsing date
+              return false;
             }
           case 'select':
             return String(cellValue) === filter.value;
           case 'boolean':
-            // If filter.value is undefined, it means "Any", so all rows pass for this filter
             if (filter.value === undefined) return true;
             return Boolean(cellValue) === filter.value;
           default:
@@ -206,7 +267,7 @@ export function DataGrid<TData extends { id: string | number }>({
       });
     });
     return dataToFilter;
-  }, [initialData, state.globalFilter, state.columnFilters, columnDefs, state.visibleColumns]);
+  }, [initialData, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns]);
 
   const sortedData = React.useMemo(() => {
     if (!state.sortConfig) return filteredData;
@@ -214,10 +275,8 @@ export function DataGrid<TData extends { id: string | number }>({
     return [...filteredData].sort((a, b) => {
       const valA = getCellValue(a, field);
       const valB = getCellValue(b, field);
-
       if (valA === null || valA === undefined) return direction === 'asc' ? 1 : -1;
       if (valB === null || valB === undefined) return direction === 'asc' ? -1 : 1;
-      
       if (typeof valA === 'number' && typeof valB === 'number') {
         return direction === 'asc' ? valA - valB : valB - valA;
       }
@@ -227,7 +286,6 @@ export function DataGrid<TData extends { id: string | number }>({
       if (typeof valA === 'string' && typeof valB === 'string') {
         return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
       }
-      // Fallback for other types, convert to string for comparison
       return direction === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
     });
   }, [filteredData, state.sortConfig]);
@@ -240,11 +298,14 @@ export function DataGrid<TData extends { id: string | number }>({
   const totalPages = Math.ceil(sortedData.length / state.pageSize);
 
   const visibleColumnDefs = React.useMemo(() => {
-    return columnDefs.filter(col => state.visibleColumns.includes(col.field));
-  }, [columnDefs, state.visibleColumns]);
+    const colDefsMap = new Map(processedColumnDefs.map(col => [col.field, col]));
+    return state.columnOrder
+      .filter(field => state.visibleColumns.includes(field))
+      .map(field => colDefsMap.get(field)!)
+      .filter(Boolean); // Ensure no undefined columns if something goes wrong
+  }, [processedColumnDefs, state.columnOrder, state.visibleColumns]);
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.every(row => state.selectedRows.has(row.id));
-
 
   if (!initialData) {
      return (
@@ -259,7 +320,6 @@ export function DataGrid<TData extends { id: string | number }>({
 
   const renderCellContent = (row: TData, col: ColumnDefinition<TData>): React.ReactNode => {
     const cellValue = getCellValue(row, col.field);
-
     if (col.field === 'age') {
       return <span className="text-right w-full block">{cellValue}</span>;
     }
@@ -274,7 +334,7 @@ export function DataGrid<TData extends { id: string | number }>({
       try {
         return new Date(String(cellValue)).toLocaleDateString();
       } catch (e) {
-        return String(cellValue); // Fallback if date is invalid
+        return String(cellValue);
       }
     }
     if (col.field === 'progress') {
@@ -290,7 +350,6 @@ export function DataGrid<TData extends { id: string | number }>({
     return String(cellValue);
   };
 
-
   return (
     <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
       <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-2">
@@ -302,7 +361,7 @@ export function DataGrid<TData extends { id: string | number }>({
           aria-label="Global search input"
         />
         <ColumnVisibilityToggle
-          allColumns={columnDefs}
+          allColumns={processedColumnDefs} // Use processed for all available columns
           visibleColumns={state.visibleColumns}
           onVisibilityChange={handleColumnVisibilityChange}
         />
@@ -312,7 +371,7 @@ export function DataGrid<TData extends { id: string | number }>({
           <TableHeader>
             <TableRow>
               {enableRowSelection && (
-                <TableHead className="w-[50px] px-3 py-2">
+                <TableHead className="w-[50px] px-3 py-2 align-top"> {/* align-top for select all */}
                   <Checkbox
                     checked={isAllCurrentPageRowsSelected}
                     onCheckedChange={(checked) => handleSelectAllRows(!!checked)}
@@ -321,25 +380,38 @@ export function DataGrid<TData extends { id: string | number }>({
                   />
                 </TableHead>
               )}
-              {visibleColumnDefs.map((col) => (
-                <TableHead
-                  key={col.field}
-                  style={{ 
-                    width: col.defaultWidth, 
-                    minWidth: col.minWidth || col.defaultWidth || '100px',
-                  }}
-                  className="px-3 py-0" // Reduced py for header cell internal padding
-                >
-                  <DataGridHeaderCell
-                    column={col}
-                    sortConfig={state.sortConfig}
-                    onSort={handleSort}
-                    onFilterChange={handleColumnFilterChange}
-                    columnFilters={state.columnFilters}
-                    // uniqueColumnValues prop removed
-                  />
-                </TableHead>
-              ))}
+              {visibleColumnDefs.map((col) => {
+                const isReorderable = col.reorderable !== false;
+                return (
+                  <TableHead
+                    key={col.field}
+                    style={{ 
+                      width: state.columnWidths[col.field] || col.defaultWidth, 
+                      minWidth: col.minWidth || state.columnWidths[col.field] || col.defaultWidth || '50px', // Ensure minWidth respects current or default
+                    }}
+                    className="px-0 py-0 relative" // py-0 for header cell to control padding, relative for resize handle
+                    draggable={isReorderable}
+                    onDragStart={(e) => isReorderable && handleDragStart(col.field, e)}
+                    onDragOver={(e) => isReorderable && handleDragOver(e, col.field)}
+                    onDragLeave={() => isReorderable && handleDragLeave()}
+                    onDrop={(e) => isReorderable && handleDrop(col.field, e)}
+                    onDragEnd={() => isReorderable && handleDragEnd()}
+                    data-is-dragged={state.draggedColumn === col.field}
+                    data-is-drop-target={state.draggedOverColumn === col.field && state.draggedColumn !== col.field}
+                  >
+                    <DataGridHeaderCell
+                      column={col}
+                      sortConfig={state.sortConfig}
+                      onSort={handleSort}
+                      onFilterChange={handleColumnFilterChange}
+                      columnFilters={state.columnFilters}
+                      currentWidth={state.columnWidths[col.field] || col.defaultWidth || '150px'}
+                      onColumnWidthChange={handleColumnWidthChange}
+                      isDraggable={isReorderable}
+                    />
+                  </TableHead>
+                );
+              })}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -365,7 +437,8 @@ export function DataGrid<TData extends { id: string | number }>({
                       key={col.field} 
                       className="px-3 py-2 truncate"
                       style={{ 
-                        maxWidth: col.defaultWidth || '200px', 
+                        width: state.columnWidths[col.field] || col.defaultWidth,
+                        maxWidth: state.columnWidths[col.field] || col.defaultWidth, 
                       }}
                       title={String(getCellValue(row, col.field))}
                     >
@@ -397,4 +470,3 @@ export function DataGrid<TData extends { id: string | number }>({
     </div>
   );
 }
-

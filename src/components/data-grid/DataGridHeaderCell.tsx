@@ -6,7 +6,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { DataGridFilterPopover } from './DataGridFilterPopover';
 import { ArrowDown, ArrowUp, Filter, Users, Mail, CalendarDays, Hash, Edit3, Activity, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-// Label and FilterX imports removed as their functionality is now fully within DataGridFilterPopover
 
 interface DataGridHeaderCellProps<TData> {
   column: ColumnDefinition<TData>;
@@ -14,7 +13,9 @@ interface DataGridHeaderCellProps<TData> {
   onSort: (field: keyof TData & string) => void;
   onFilterChange: (field: keyof TData & string, value?: FilterValue) => void;
   columnFilters: ActiveFilters<TData>;
-  // uniqueColumnValues prop removed
+  currentWidth: string | number;
+  onColumnWidthChange: (field: keyof TData & string, newWidth: number) => void;
+  isDraggable?: boolean; // To be set by parent TH based on column.reorderable
 }
 
 const iconMap: { [key: string]: LucideIcon } = {
@@ -32,12 +33,13 @@ export function DataGridHeaderCell<TData>({
   onSort,
   onFilterChange,
   columnFilters,
+  currentWidth, // unused directly for rendering, but needed for resize logic start point
+  onColumnWidthChange,
+  isDraggable,
 }: DataGridHeaderCellProps<TData>) {
   const isSorted = sortConfig?.field === column.field;
   const isFiltered = !!columnFilters[column.field];
-
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = React.useState(false);
-
   const IconComponent = column.iconName ? iconMap[column.iconName] : null;
 
   const headerContent = column.headerRenderer ? (
@@ -46,8 +48,39 @@ export function DataGridHeaderCell<TData>({
     <span className="truncate">{column.headerText}</span>
   );
 
+  const handleMouseDownOnResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation(); // Prevent text selection and other interactions
+
+    const thElement = (event.target as HTMLElement).closest('th');
+    if (!thElement) return;
+
+    const startX = event.clientX;
+    // Ensure currentWidth is a number for calculation
+    const startWidth = parseFloat(String(thElement.style.width || thElement.offsetWidth));
+    
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = startWidth + (moveEvent.clientX - startX);
+      const minW = parseFloat(String(column.minWidth || 50)); // Default min width 50px
+      onColumnWidthChange(column.field, Math.max(minW, newWidth));
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+  
+  const isResizable = column.resizable !== false;
+
   return (
-    <div className="flex items-center justify-between group py-2 pr-2">
+    <div 
+      className={cn("flex items-center justify-between group py-2 pr-2 h-full w-full", isDraggable && "cursor-grab")}
+      style={{ position: 'relative' }} // Needed for absolute positioning of resize handle
+    >
       <div className="flex items-center flex-grow min-w-0">
         {IconComponent && <IconComponent className="mr-2 h-4 w-4 text-muted-foreground" />}
         {column.sortable ? (
@@ -80,6 +113,7 @@ export function DataGridHeaderCell<TData>({
                   isFilterPopoverOpen && "opacity-100 bg-accent text-accent-foreground"
                 )}
                 aria-label={`Filter ${column.headerText}`}
+                onClick={(e) => e.stopPropagation()} // Prevent grab cursor if draggable
               >
                 <Filter className="h-3.5 w-3.5" />
               </Button>
@@ -97,6 +131,14 @@ export function DataGridHeaderCell<TData>({
           </Popover>
         )}
       </div>
+      {isResizable && (
+        <div
+          className="resize-handle"
+          onMouseDown={handleMouseDownOnResize}
+          onClick={(e) => e.stopPropagation()} // Prevent sort/drag if clicking handle
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 }
