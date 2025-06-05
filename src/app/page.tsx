@@ -3,7 +3,6 @@
 import * as React from 'react';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition, HierarchicalData } from '@/types/data-grid';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -58,12 +57,12 @@ const initialSampleData: Person[] = [
 const columnDefs: ColumnDefinition<Person>[] = [
   {
     field: 'firstName',
-    headerText: 'First Name',
+    headerText: 'Name', // Changed from 'First Name'
     sortable: true,
     filterable: true,
     filterType: 'text',
     editable: true,
-    defaultWidth: '200px', 
+    defaultWidth: '250px', // Increased width to accommodate avatar, name, email
     iconName: 'Users',
     pinned: 'left',
     groupable: true,
@@ -171,7 +170,6 @@ export default function Home() {
 
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       const handleChange = () => {
-        // Only update if 'system' is still the chosen theme mode
         if (!localStorage.getItem('theme')) { 
           applyActualTheme(mediaQuery.matches ? 'dark' : 'light');
         }

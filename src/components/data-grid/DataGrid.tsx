@@ -25,8 +25,8 @@ import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { DataGridGroupingPanel } from './DataGridGroupingPanel';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import { ChevronRight, ChevronDown, FileDown } from 'lucide-react';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { ChevronRight, ChevronDown, FileDown, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportToCsv, exportToXlsx } from '@/lib/exportUtils';
 import {
@@ -195,7 +195,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const uniqueValues = new Set<string>();
     const traverse = (items: TData[]) => {
       items.forEach(row => {
-        const value = (row as any)[field];
+        const value = getCellValue(row, field);
         if (value !== undefined && value !== null) {
           uniqueValues.add(String(value));
         }
@@ -238,7 +238,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         level,
         hasChildren,
         isExpanded,
-        ...item
+        // Do not spread item here to avoid ProcessedRow specific props being overwritten by originalRow
       });
       if (hasChildren && isExpanded && item.children) {
         flatList = flatList.concat(flattenTreeData(item.children, expandedRows, level + 1));
@@ -257,7 +257,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       level: 0,
       hasChildren: false,
       isExpanded: false,
-       ...item
+       // Do not spread item here
     }));
   }, [initialData, isTreeData, flattenTreeData, state.expandedRows]);
 
@@ -474,7 +474,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       setState(prevState => ({
         ...prevState,
         editingCell: { rowId, field },
-        editInputValue: getCellValue(row, field),
+        editInputValue: getCellValue(row.originalRow, field),
         focusedCell: { rowId, colField: field }, 
       }));
     }
@@ -499,7 +499,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       if (columnDef?.filterType === 'number' || (originalRow && typeof originalRow[field] === 'number')) {
         valueToCommit = parseFloat(state.editInputValue);
         if (isNaN(valueToCommit) && originalRow) {
-          valueToCommit = originalRow[field]; 
+          valueToCommit = getCellValue(originalRow, field); 
         }
       }
       onCellEdit(rowId, field, valueToCommit);
@@ -530,7 +530,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       dataToFilter = dataToFilter.filter((row) =>
         processedColumnDefs.some((col) => {
           if (state.visibleColumns.includes(col.field)) {
-            const cellValue = getCellValue(row, col.field);
+            const cellValue = getCellValue(row.originalRow, col.field);
             return String(cellValue).toLowerCase().includes(lowerGlobalFilter);
           }
           return false;
@@ -544,7 +544,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       if (!colDef || !state.visibleColumns.includes(colDef.field)) return;
 
       dataToFilter = dataToFilter.filter((row) => {
-        const cellValue = getCellValue(row, field as keyof TData & string);
+        const cellValue = getCellValue(row.originalRow, field as keyof TData & string);
         if (cellValue === undefined || cellValue === null) {
             if (filter.type === 'boolean' && filter.value === undefined) return true;
             return false;
@@ -598,8 +598,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       const groupField = groupedBy[0]; 
       const groupColDef = colDefsMap.get(groupField);
       dataToSort.sort((a, b) => {
-        const valA = getCellValue(a, groupField);
-        const valB = getCellValue(b, groupField);
+        const valA = getCellValue(a.originalRow, groupField);
+        const valB = getCellValue(b.originalRow, groupField);
         if (valA === null || valA === undefined) return 1;
         if (valB === null || valB === undefined) return -1;
         if (typeof valA === 'number' && typeof valB === 'number') return valA - valB;
@@ -620,8 +620,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     return dataToSort.sort((a, b) => {
       if (groupedBy.length > 0 && !isTreeData) {
         const groupField = groupedBy[0];
-        const groupValA = getCellValue(a, groupField);
-        const groupValB = getCellValue(b, groupField);
+        const groupValA = getCellValue(a.originalRow, groupField);
+        const groupValB = getCellValue(b.originalRow, groupField);
         if (groupValA !== groupValB) {
           if (groupValA === null || groupValA === undefined) return 1;
           if (groupValB === null || groupValB === undefined) return -1;
@@ -629,8 +629,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         }
       }
 
-      const valA = getCellValue(a, field);
-      const valB = getCellValue(b, field);
+      const valA = getCellValue(a.originalRow, field);
+      const valB = getCellValue(b.originalRow, field);
       if (valA === null || valA === undefined) return direction === 'asc' ? 1 : -1;
       if (valB === null || valB === undefined) return direction === 'asc' ? -1 : 1;
 
@@ -661,19 +661,19 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     let currentGroupItems: ProcessedRow<TData>[] = [];
 
     sortedData.forEach((row, index) => {
-      const rowGroupValue = getCellValue(row, groupField);
+      const rowGroupValue = getCellValue(row.originalRow, groupField);
       if (index === 0 || rowGroupValue !== currentGroupValue) {
         if (currentGroupItems.length > 0 && currentGroupValue !== undefined) {
-          const groupKey = `${groupField}:${currentGroupValue}`;
+          const groupKey = `${String(groupField)}:${String(currentGroupValue)}`;
            groupedResult.push({
             id: `group-header-${groupKey}`,
             originalRow: {} as TData, 
             level: 0, 
             hasChildren: true, 
             isGroupHeader: true,
-            groupKey: groupKey,
             groupField: groupField,
             groupValue: currentGroupValue,
+            groupKey: groupKey,
             isExpanded: state.expandedGroups.has(groupKey),
           } as ProcessedRow<TData>);
           if (state.expandedGroups.has(groupKey)) {
@@ -687,16 +687,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     });
 
     if (currentGroupItems.length > 0 && currentGroupValue !== undefined) {
-      const groupKey = `${groupField}:${currentGroupValue}`;
+      const groupKey = `${String(groupField)}:${String(currentGroupValue)}`;
       groupedResult.push({
         id: `group-header-${groupKey}`,
         originalRow: {} as TData,
         level: 0,
         hasChildren: true,
         isGroupHeader: true,
-        groupKey: groupKey,
         groupField: groupField,
         groupValue: currentGroupValue,
+        groupKey: groupKey,
         isExpanded: state.expandedGroups.has(groupKey),
       } as ProcessedRow<TData>);
        if (state.expandedGroups.has(groupKey)) {
@@ -855,8 +855,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         break;
       case 'Escape':
         if (state.focusedCell && !state.editingCell) {
-          // Could blur grid or clear focus here if desired.
-          // For now, escape primarily handles canceling edits.
         }
         break;
       default:
@@ -883,20 +881,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
          if (tableContainer) {
             const containerRect = tableContainer.getBoundingClientRect();
-            // Check if cell is outside the visible viewport of the scrollable container
             const isVisibleX = cellRect.left >= containerRect.left && cellRect.right <= containerRect.right;
-            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom; // Assuming vertical scroll eventually
+            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom; 
 
             if (!isVisibleX || !isVisibleY) {
                 cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }
          } else {
-             // Fallback if the specific container isn't found, scroll within window
              cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
          }
       }
     }
-  }, [state.focusedCell, state.editingCell, paginatedData]); // Re-run when paginatedData changes, as focused cell might be on a new page
+  }, [state.focusedCell, state.editingCell, paginatedData]); 
 
   if (!initialData) {
      return (
@@ -910,11 +906,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }
 
   const renderCellContent = (row: ProcessedRow<TData>, col: ColumnDefinition<TData>): React.ReactNode => {
-    const cellValue = getCellValue(row, col.field);
+    const cellValue = getCellValue(row.originalRow, col.field);
 
     if (state.editingCell && state.editingCell.rowId === row.id && state.editingCell.field === col.field) {
       const colDef = processedColumnDefs.find(c => c.field === col.field);
-      const inputType = colDef?.filterType === 'number' || typeof cellValue === 'number' ? 'number' : 'text';
+      const originalRowForEdit = baseDataForProcessing.find(r => r.id === row.id)?.originalRow;
+      const inputType = colDef?.filterType === 'number' || (originalRowForEdit && typeof getCellValue(originalRowForEdit,col.field) === 'number') ? 'number' : 'text';
       return (
         <Input
           type={inputType}
@@ -928,73 +925,88 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       );
     }
 
-    const content = (() => {
-      if (col.field === 'age') {
-        return <span className="text-right w-full block">{cellValue}</span>;
-      }
-      if (col.field === 'isActive') {
-        return (
-          <Badge variant={cellValue ? 'default' : 'secondary'} className={cn(cellValue ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600', "text-white")}>
-            {cellValue ? 'Yes' : 'No'}
-          </Badge>
-        );
-      }
-      if (col.field === 'registrationDate') {
-        try {
-          return new Date(String(cellValue)).toLocaleDateString();
-        } catch (e) {
-          return String(cellValue);
-        }
-      }
-      if (col.field === 'progress') {
-        return (
-          <div className="flex items-center">
-            <div className="w-full bg-muted rounded-full h-2.5 mr-2">
-              <div className="bg-primary h-2.5 rounded-full" style={{ width: `${cellValue}%` }}></div>
-            </div>
-            <span className="text-sm">{cellValue}%</span>
-          </div>
-        );
-      }
-      return String(cellValue);
-    })();
-
     if (isTreeData && treeColumn && col.field === treeColumn) {
+      const nameContent = (
+        <div className="flex items-center gap-2">
+          <Avatar className="h-8 w-8">
+            <AvatarFallback>
+              {String(getCellValue(row.originalRow, 'firstName'))?.charAt(0)?.toUpperCase()}
+              {String(getCellValue(row.originalRow, 'lastName'))?.charAt(0)?.toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div>
+            <div className="font-medium">
+              {getCellValue(row.originalRow, 'firstName')} {getCellValue(row.originalRow, 'lastName')}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {getCellValue(row.originalRow, 'email')}
+            </div>
+          </div>
+        </div>
+      );
+
       return (
         <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
           {row.hasChildren ? (
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleExpandRow(row.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); handleToggleExpandRow(row.id); }}
               className="mr-1 p-0.5 rounded hover:bg-accent focus:outline-none"
               aria-label={row.isExpanded ? "Collapse row" : "Expand row"}
-              tabIndex={-1} // Not focusable with Tab, handled by grid nav
+              tabIndex={-1}
             >
               {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
           ) : (
-            // Placeholder for alignment if no children
             <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span>
           )}
-          {content}
+          {nameContent}
         </div>
       );
     }
-    return content;
+
+    if (col.field === 'isActive') {
+      return cellValue ? (
+        <Check className="h-5 w-5 text-green-500" />
+      ) : (
+        <X className="h-5 w-5 text-red-500" />
+      );
+    }
+    
+    if (col.field === 'age') {
+      return <span className="text-right w-full block">{String(cellValue)}</span>;
+    }
+
+    if (col.field === 'registrationDate') {
+      try {
+        return new Date(String(cellValue)).toLocaleDateString();
+      } catch (e) {
+        return String(cellValue);
+      }
+    }
+    if (col.field === 'progress') {
+      return (
+        <div className="flex items-center">
+          <div className="w-full bg-muted rounded-full h-2.5 mr-2">
+            <div className="bg-primary h-2.5 rounded-full" style={{ width: `${cellValue}%` }}></div>
+          </div>
+          <span className="text-sm">{cellValue}%</span>
+        </div>
+      );
+    }
+      
+    return String(cellValue);
   };
 
   const checkboxColumnWidth = '50px';
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
 
   const handleExportCsv = () => {
-    const dataToExport = sortedData.filter(row => !row.isGroupHeader);
+    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); // Get originalRow for export
     exportToCsv(dataToExport, orderedVisibleColumnDefs, 'grid_export');
   };
 
   const handleExportXlsx = () => {
-    const dataToExport = sortedData.filter(row => !row.isGroupHeader);
+    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); // Get originalRow for export
     exportToXlsx(dataToExport, orderedVisibleColumnDefs, 'grid_export');
   };
 
@@ -1132,7 +1144,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               paginatedData.map((row) => {
                 if (row.isGroupHeader) {
                   const groupColDef = colDefsMap.get(row.groupField as keyof TData & string);
-                  const groupHeaderText = groupColDef ? groupColDef.headerText : row.groupField;
+                  const groupHeaderText = groupColDef ? groupColDef.headerText : String(row.groupField);
                   return (
                     <TableRow key={row.id} className="group-header-row">
                       <TableCell 
@@ -1203,7 +1215,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
                           ...stickyStyle
                         }}
-                        title={String(getCellValue(row, colDef.field))}
+                        title={String(getCellValue(row.originalRow, colDef.field))}
                         onClick={() => handleCellClick(row.id, colDef.field)}
                         onDoubleClick={() => colDef.editable && startEditingCell(row.id, colDef.field)}
                       >
