@@ -4,6 +4,14 @@ import * as React from 'react';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition, HierarchicalData } from '@/types/data-grid';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Sun, Moon, Laptop } from 'lucide-react';
 
 interface Person extends HierarchicalData<Person> {
   id: number;
@@ -91,7 +99,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     editable: true,
     defaultWidth: '250px',
     iconName: 'Mail',
-    groupable: false, // Example of non-groupable
+    groupable: false, 
   },
   {
     field: 'isActive',
@@ -139,8 +147,45 @@ const columnDefs: ColumnDefinition<Person>[] = [
 export default function Home() {
   const [gridData, setGridData] = React.useState<Person[]>(initialSampleData);
 
-  const handleCellEdit = (rowId: string | number, field: keyof Person, value: any) => {
+  const [theme, setTheme] = React.useState<'light' | 'dark' | 'system'>(() => {
+    if (typeof window === 'undefined') return 'system';
+    const storedTheme = localStorage.getItem('theme');
+    if (storedTheme === 'light' || storedTheme === 'dark') {
+      return storedTheme;
+    }
+    return 'system';
+  });
+
+  React.useEffect(() => {
+    const root = window.document.documentElement;
     
+    const applyActualTheme = (actualTheme: 'light' | 'dark') => {
+      root.classList.remove('light', 'dark');
+      root.classList.add(actualTheme);
+    };
+
+    if (theme === 'system') {
+      localStorage.removeItem('theme');
+      const systemIsDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyActualTheme(systemIsDark ? 'dark' : 'light');
+
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = () => {
+        // Only update if 'system' is still the chosen theme mode
+        if (!localStorage.getItem('theme')) { 
+          applyActualTheme(mediaQuery.matches ? 'dark' : 'light');
+        }
+      };
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    } else {
+      applyActualTheme(theme);
+      localStorage.setItem('theme', theme);
+    }
+  }, [theme]);
+
+
+  const handleCellEdit = (rowId: string | number, field: keyof Person, value: any) => {
     const updateRecursively = (items: Person[]): Person[] => {
       return items.map(item => {
         if (item.id === rowId) {
@@ -158,12 +203,40 @@ export default function Home() {
   return (
     <main className="container mx-auto py-10 px-4">
       <header className="mb-8">
-        <h1 className="font-headline text-4xl font-bold text-primary mb-2">
-          ngx-mat-data-grid
-        </h1>
-        <p className="text-lg text-muted-foreground">
-          A feature-rich data grid component for Next.js applications, inspired by Angular Material Data Grids.
-        </p>
+        <div className="flex justify-between items-start sm:items-center">
+          <div>
+            <h1 className="font-headline text-4xl font-bold text-primary mb-2">
+              ngx-mat-data-grid
+            </h1>
+            <p className="text-lg text-muted-foreground">
+              A feature-rich data grid component for Next.js applications, inspired by Angular Material Data Grids.
+            </p>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="ml-4 shrink-0">
+                {theme === 'light' && <Sun className="h-[1.2rem] w-[1.2rem] transition-all" />}
+                {theme === 'dark' && <Moon className="h-[1.2rem] w-[1.2rem] transition-all" />}
+                {theme === 'system' && <Laptop className="h-[1.2rem] w-[1.2rem] transition-all" />}
+                <span className="sr-only">Toggle theme</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setTheme('light')}>
+                <Sun className="mr-2 h-4 w-4" />
+                <span>Light</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTheme('dark')}>
+                <Moon className="mr-2 h-4 w-4" />
+                <span>Dark</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTheme('system')}>
+                <Laptop className="mr-2 h-4 w-4" />
+                <span>System</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </header>
       
       <DataGrid<Person>
@@ -173,9 +246,9 @@ export default function Home() {
         pageSizeOptions={[5, 10, 15, 25, 50]}
         enableRowSelection={true}
         onCellEdit={handleCellEdit}
-        isTreeData={false} // Set to false to test grouping, or true for tree
+        isTreeData={false} 
         treeColumn="firstName"
-        enableGroupingPanel={true} // Enable the grouping panel
+        enableGroupingPanel={true}
       />
     </main>
   );
