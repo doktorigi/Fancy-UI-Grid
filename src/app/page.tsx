@@ -42,6 +42,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     editable: true,
     defaultWidth: '150px',
     iconName: 'Users',
+    pinned: 'left',
   },
   {
     field: 'lastName',
@@ -99,6 +100,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     filterType: 'select',
     defaultWidth: '150px',
     iconName: 'Edit3', 
+    pinned: 'right',
   },
   {
     field: 'progress',

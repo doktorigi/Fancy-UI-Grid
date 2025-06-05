@@ -3,8 +3,15 @@ import * as React from 'react';
 import type { ColumnDefinition, SortConfig, FilterValue, ActiveFilters } from '@/types/data-grid';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { DataGridFilterPopover } from './DataGridFilterPopover';
-import { ArrowDown, ArrowUp, Filter, Users, Mail, CalendarDays, Hash, Edit3, Activity, type LucideIcon } from 'lucide-react';
+import { ArrowDown, ArrowUp, Filter, Users, Mail, CalendarDays, Hash, Edit3, Activity, Pin, PinOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DataGridHeaderCellProps<TData> {
@@ -15,7 +22,9 @@ interface DataGridHeaderCellProps<TData> {
   columnFilters: ActiveFilters<TData>;
   currentWidth: string | number;
   onColumnWidthChange: (field: keyof TData & string, newWidth: number) => void;
-  isDraggable?: boolean; // To be set by parent TH based on column.reorderable
+  onPinColumn: (field: keyof TData & string, position: 'left' | 'right' | null) => void;
+  isDraggable?: boolean;
+  currentPinnedState?: 'left' | 'right' | null;
 }
 
 const iconMap: { [key: string]: LucideIcon } = {
@@ -33,9 +42,10 @@ export function DataGridHeaderCell<TData>({
   onSort,
   onFilterChange,
   columnFilters,
-  currentWidth, // unused directly for rendering, but needed for resize logic start point
   onColumnWidthChange,
+  onPinColumn,
   isDraggable,
+  currentPinnedState,
 }: DataGridHeaderCellProps<TData>) {
   const isSorted = sortConfig?.field === column.field;
   const isFiltered = !!columnFilters[column.field];
@@ -50,18 +60,17 @@ export function DataGridHeaderCell<TData>({
 
   const handleMouseDownOnResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    event.stopPropagation(); // Prevent text selection and other interactions
+    event.stopPropagation(); 
 
     const thElement = (event.target as HTMLElement).closest('th');
     if (!thElement) return;
 
     const startX = event.clientX;
-    // Ensure currentWidth is a number for calculation
     const startWidth = parseFloat(String(thElement.style.width || thElement.offsetWidth));
     
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const newWidth = startWidth + (moveEvent.clientX - startX);
-      const minW = parseFloat(String(column.minWidth || 50)); // Default min width 50px
+      const minW = parseFloat(String(column.minWidth || 50)); 
       onColumnWidthChange(column.field, Math.max(minW, newWidth));
     };
 
@@ -75,11 +84,12 @@ export function DataGridHeaderCell<TData>({
   };
   
   const isResizable = column.resizable !== false;
+  const canPin = column.reorderable !== false; // Typically, non-reorderable columns shouldn't be pinnable either
 
   return (
     <div 
       className={cn("flex items-center justify-between group py-2 pr-2 h-full w-full", isDraggable && "cursor-grab")}
-      style={{ position: 'relative' }} // Needed for absolute positioning of resize handle
+      style={{ position: 'relative' }} 
     >
       <div className="flex items-center flex-grow min-w-0">
         {IconComponent && <IconComponent className="mr-2 h-4 w-4 text-muted-foreground" />}
@@ -100,7 +110,47 @@ export function DataGridHeaderCell<TData>({
         )}
       </div>
 
-      <div className="flex items-center space-x-1">
+      <div className="flex items-center space-x-1 shrink-0">
+        {canPin && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-6 w-6 opacity-50 hover:opacity-100 focus:opacity-100",
+                  currentPinnedState && "opacity-100 text-primary"
+                )}
+                aria-label={`Pin column ${column.headerText}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Pin className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="bottom">
+              <DropdownMenuItem 
+                onClick={() => onPinColumn(column.field, 'left')}
+                disabled={currentPinnedState === 'left'}
+              >
+                Pin Left
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => onPinColumn(column.field, 'right')}
+                disabled={currentPinnedState === 'right'}
+              >
+                Pin Right
+              </DropdownMenuItem>
+              {currentPinnedState && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => onPinColumn(column.field, null)}>
+                    <PinOff className="mr-2 h-3.5 w-3.5 text-muted-foreground" /> Unpin
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {column.filterable && column.filterType && (
            <Popover open={isFilterPopoverOpen} onOpenChange={setIsFilterPopoverOpen}>
             <PopoverTrigger asChild>
@@ -113,12 +163,12 @@ export function DataGridHeaderCell<TData>({
                   isFilterPopoverOpen && "opacity-100 bg-accent text-accent-foreground"
                 )}
                 aria-label={`Filter ${column.headerText}`}
-                onClick={(e) => e.stopPropagation()} // Prevent grab cursor if draggable
+                onClick={(e) => e.stopPropagation()} 
               >
                 <Filter className="h-3.5 w-3.5" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-64 p-4" side="bottom" align="start">
+            <PopoverContent className="w-64 p-4" side="bottom" align="start" onClick={(e) => e.stopPropagation()}>
               <DataGridFilterPopover
                 column={column}
                 filterValue={columnFilters[column.field]}
@@ -135,7 +185,7 @@ export function DataGridHeaderCell<TData>({
         <div
           className="resize-handle"
           onMouseDown={handleMouseDownOnResize}
-          onClick={(e) => e.stopPropagation()} // Prevent sort/drag if clicking handle
+          onClick={(e) => e.stopPropagation()} 
           aria-hidden="true"
         />
       )}

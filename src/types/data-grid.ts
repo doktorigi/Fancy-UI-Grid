@@ -13,6 +13,7 @@ export interface ColumnDefinition<TData = any> {
   filterType?: FilterType;
   hideable?: boolean; // Default true
   editable?: boolean; // Default false
+  pinned?: 'left' | 'right' | null; // For column pinning
   headerRenderer?: () => React.ReactNode;
   defaultWidth?: string | number;
   minWidth?: string | number; // Minimum width for resizing
@@ -75,10 +76,14 @@ export interface DataGridState<TData = any> {
   columnFilters: ActiveFilters<TData>;
   visibleColumns: (keyof TData & string)[];
   selectedRows: Set<string | number>;
-  columnOrder: (keyof TData & string)[]; // For reordering
-  columnWidths: Record<keyof TData & string, string | number>; // For resizing
-  draggedColumn: (keyof TData & string) | null; // For reordering visual
-  draggedOverColumn: (keyof TData & string) | null; // For reordering visual feedback
+  columnOrder: (keyof TData & string)[];
+  columnWidths: Record<keyof TData & string, string | number>;
+  draggedColumn: (keyof TData & string) | null;
+  draggedOverColumn: (keyof TData & string) | null;
   editingCell?: { rowId: string | number; field: keyof TData & string } | null;
   editInputValue?: any;
+  pinnedColumns: {
+    left: (keyof TData & string)[];
+    right: (keyof TData & string)[];
+  };
 }

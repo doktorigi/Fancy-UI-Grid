@@ -113,18 +113,31 @@
   .resize-handle {
     @apply absolute right-0 top-0 h-full w-[5px] cursor-col-resize select-none z-10;
   }
-  /* Optional: visual cue for the resize handle */
-  /* .resize-handle:hover {
-    @apply bg-blue-500 opacity-50;
-  } */
 
-  /* Styling for dragged column header */
-  th[data-is-dragged="true"] > div { /* Target the DataGridHeaderCell's root div */
+  th[data-is-dragged="true"] > div { 
     @apply opacity-50 bg-muted;
   }
 
-  /* Styling for column header when it's a drop target */
   th[data-is-drop-target="true"] {
     @apply outline outline-2 outline-primary outline-offset-[-2px];
+  }
+
+  .sticky-header-cell, .sticky-body-cell {
+    @apply sticky bg-card; /* Ensure background to prevent content overlap */
+  }
+  
+  .sticky-header-cell {
+    z-index: 20; /* Above body cells */
+  }
+
+  .sticky-body-cell {
+    z-index: 10; 
+  }
+
+  .pinned-left-shadow {
+    box-shadow: 2px 0 3px -1px hsl(var(--border) / 0.5);
+  }
+  .pinned-right-shadow {
+    box-shadow: -2px 0 3px -1px hsl(var(--border) / 0.5);
   }
 }

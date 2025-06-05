@@ -28,6 +28,8 @@ const getCellValue = <TData,>(row: TData, field: keyof TData & string): any => {
   return row[field];
 };
 
+const DEFAULT_COL_WIDTH = 150; // px
+
 export function DataGrid<TData extends { id: string | number }>({
   data: initialData,
   columnDefs: initialColumnDefs, 
@@ -38,9 +40,24 @@ export function DataGrid<TData extends { id: string | number }>({
 }: DataGridProps<TData>) {
   const [state, setState] = React.useState<DataGridState<TData>>(() => {
     const defaultWidths: Record<keyof TData & string, string | number> = {};
+    const initialPinnedLeft: (keyof TData & string)[] = [];
+    const initialPinnedRight: (keyof TData & string)[] = [];
+    const initialColumnOrder = initialColumnDefs.map(col => col.field);
+
     initialColumnDefs.forEach(col => {
-      defaultWidths[col.field] = col.defaultWidth || '150px';
+      defaultWidths[col.field] = col.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
+      if (col.pinned === 'left') {
+        initialPinnedLeft.push(col.field);
+      } else if (col.pinned === 'right') {
+        initialPinnedRight.push(col.field);
+      }
     });
+    
+    // Ensure pinned columns are not in the main columnOrder initially
+    const unpinnedColumnOrder = initialColumnOrder.filter(
+      field => !initialPinnedLeft.includes(field) && !initialPinnedRight.includes(field)
+    );
+
     return {
       currentPage: 1,
       pageSize: defaultPageSize,
@@ -49,12 +66,13 @@ export function DataGrid<TData extends { id: string | number }>({
       columnFilters: {},
       visibleColumns: initialColumnDefs.map((col) => col.field),
       selectedRows: new Set<string | number>(),
-      columnOrder: initialColumnDefs.map(col => col.field),
+      columnOrder: unpinnedColumnOrder,
       columnWidths: defaultWidths,
       draggedColumn: null,
       draggedOverColumn: null,
       editingCell: null,
       editInputValue: '',
+      pinnedColumns: { left: initialPinnedLeft, right: initialPinnedRight },
     };
   });
 
@@ -81,7 +99,6 @@ export function DataGrid<TData extends { id: string | number }>({
       return colDef;
     });
   }, [initialColumnDefs, getUniqueColumnValues]);
-
 
   const handleSort = (field: keyof TData & string) => {
     setState((prevState) => {
@@ -167,7 +184,10 @@ export function DataGrid<TData extends { id: string | number }>({
   const handleDragOver = (event: React.DragEvent, targetField: keyof TData & string) => {
     event.preventDefault(); 
     if (state.draggedColumn && state.draggedColumn !== targetField) {
-      setState(prevState => ({ ...prevState, draggedOverColumn: targetField }));
+       const isTargetPinned = state.pinnedColumns.left.includes(targetField) || state.pinnedColumns.right.includes(targetField);
+       if (!isTargetPinned) { // Prevent dragging over pinned columns for now
+         setState(prevState => ({ ...prevState, draggedOverColumn: targetField }));
+       }
     }
   };
 
@@ -179,8 +199,11 @@ export function DataGrid<TData extends { id: string | number }>({
     event.preventDefault();
     document.body.classList.remove('dragging');
     const sourceField = state.draggedColumn;
-  
-    if (sourceField && sourceField !== targetField) {
+    
+    const isSourcePinned = state.pinnedColumns.left.includes(sourceField!) || state.pinnedColumns.right.includes(sourceField!);
+    const isTargetPinned = state.pinnedColumns.left.includes(targetField) || state.pinnedColumns.right.includes(targetField);
+
+    if (sourceField && sourceField !== targetField && !isSourcePinned && !isTargetPinned) { // Only allow reordering of unpinned columns
       setState(prevState => {
         const newColumnOrder = [...prevState.columnOrder];
         const sourceIndex = newColumnOrder.indexOf(sourceField);
@@ -201,6 +224,32 @@ export function DataGrid<TData extends { id: string | number }>({
     document.body.classList.remove('dragging');
     setState(prevState => ({ ...prevState, draggedColumn: null, draggedOverColumn: null }));
   };
+
+  const handlePinColumn = (field: keyof TData & string, position: 'left' | 'right' | null) => {
+    setState(prevState => {
+      const newPinnedLeft = [...prevState.pinnedColumns.left.filter(f => f !== field)];
+      const newPinnedRight = [...prevState.pinnedColumns.right.filter(f => f !== field)];
+      let newColumnOrder = [...prevState.columnOrder.filter(f => f !== field)];
+
+      if (position === 'left') {
+        newPinnedLeft.push(field);
+      } else if (position === 'right') {
+        newPinnedRight.push(field);
+      } else { // Unpinning
+        // Add back to columnOrder, attempt to insert at a reasonable place, e.g., start
+        // For simplicity, add to the start of scrollable columns if not already there
+        if (!newColumnOrder.includes(field)) {
+            newColumnOrder = [field, ...newColumnOrder];
+        }
+      }
+      return {
+        ...prevState,
+        pinnedColumns: { left: newPinnedLeft, right: newPinnedRight },
+        columnOrder: newColumnOrder,
+      };
+    });
+  };
+
 
   const handleCellDoubleClick = (rowId: string | number, field: keyof TData & string, currentValue: any) => {
     const columnDef = processedColumnDefs.find(col => col.field === field);
@@ -225,7 +274,7 @@ export function DataGrid<TData extends { id: string | number }>({
       if (columnDef?.filterType === 'number' || typeof getCellValue(initialData.find(r => r.id === rowId)!, field) === 'number') {
         valueToCommit = parseFloat(state.editInputValue);
         if (isNaN(valueToCommit)) {
-          valueToCommit = getCellValue(initialData.find(r => r.id === rowId)!, field); // Revert if not a number
+          valueToCommit = getCellValue(initialData.find(r => r.id === rowId)!, field);
         }
       }
       onCellEdit(rowId, field, valueToCommit);
@@ -340,14 +389,55 @@ export function DataGrid<TData extends { id: string | number }>({
   }, [sortedData, state.currentPage, state.pageSize]);
 
   const totalPages = Math.ceil(sortedData.length / state.pageSize);
+  
+  const colDefsMap = React.useMemo(() => new Map(processedColumnDefs.map(col => [col.field, col])), [processedColumnDefs]);
 
-  const visibleColumnDefs = React.useMemo(() => {
-    const colDefsMap = new Map(processedColumnDefs.map(col => [col.field, col]));
-    return state.columnOrder
-      .filter(field => state.visibleColumns.includes(field))
+  const orderedVisibleColumnDefs = React.useMemo(() => {
+    const leftPinned = state.pinnedColumns.left
       .map(field => colDefsMap.get(field)!)
-      .filter(Boolean);
-  }, [processedColumnDefs, state.columnOrder, state.visibleColumns]);
+      .filter(col => col && state.visibleColumns.includes(col.field));
+    
+    const rightPinned = state.pinnedColumns.right
+      .map(field => colDefsMap.get(field)!)
+      .filter(col => col && state.visibleColumns.includes(col.field));
+      
+    const scrollable = state.columnOrder
+      .map(field => colDefsMap.get(field)!)
+      .filter(col => col && state.visibleColumns.includes(col.field) && !state.pinnedColumns.left.includes(col.field) && !state.pinnedColumns.right.includes(col.field));
+      
+    return [...leftPinned, ...scrollable, ...rightPinned];
+  }, [colDefsMap, state.columnOrder, state.visibleColumns, state.pinnedColumns]);
+
+
+  const getColumnWidth = React.useCallback((field: keyof TData & string): number => {
+    const width = state.columnWidths[field] || colDefsMap.get(field)?.defaultWidth || DEFAULT_COL_WIDTH;
+    return typeof width === 'number' ? width : parseInt(String(width), 10) || DEFAULT_COL_WIDTH;
+  }, [state.columnWidths, colDefsMap]);
+
+  const stickyOffsets = React.useMemo(() => {
+    const left: Record<string, number> = {};
+    let currentLeftOffset = 0;
+    if (enableRowSelection) {
+        currentLeftOffset += 50; // Approx width of checkbox column
+    }
+    state.pinnedColumns.left.forEach(field => {
+      if (state.visibleColumns.includes(field)) {
+        left[field] = currentLeftOffset;
+        currentLeftOffset += getColumnWidth(field);
+      }
+    });
+
+    const right: Record<string, number> = {};
+    let currentRightOffset = 0;
+    state.pinnedColumns.right.slice().reverse().forEach(field => { // Iterate in reverse for right offsets
+       if (state.visibleColumns.includes(field)) {
+        right[field] = currentRightOffset;
+        currentRightOffset += getColumnWidth(field);
+      }
+    });
+    return { left, right };
+  }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection]);
+
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.every(row => state.selectedRows.has(row.id));
 
@@ -375,7 +465,7 @@ export function DataGrid<TData extends { id: string | number }>({
           onBlur={handleEditCommit}
           onKeyDown={handleEditInputKeyDown}
           autoFocus
-          className="h-full p-1 border-ring" // Adjust styling as needed
+          className="h-full p-1 border-ring"
         />
       );
     }
@@ -409,6 +499,9 @@ export function DataGrid<TData extends { id: string | number }>({
     }
     return String(cellValue);
   };
+  
+  const checkboxColumnWidth = '50px';
+
 
   return (
     <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
@@ -426,30 +519,57 @@ export function DataGrid<TData extends { id: string | number }>({
           onVisibilityChange={handleColumnVisibilityChange}
         />
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto relative">
         <Table>
           <TableHeader>
             <TableRow>
               {enableRowSelection && (
-                <TableHead className="w-[50px] px-3 py-2 align-top">
-                  <Checkbox
-                    checked={isAllCurrentPageRowsSelected}
-                    onCheckedChange={(checked) => handleSelectAllRows(!!checked)}
-                    aria-label="Select all rows on current page"
-                    disabled={paginatedData.length === 0}
-                  />
+                <TableHead 
+                  className="px-0 py-0 sticky-header-cell"
+                  style={{ 
+                    width: checkboxColumnWidth, 
+                    minWidth: checkboxColumnWidth,
+                    left: 0,
+                    zIndex: 21 // Higher than other header cells
+                  }}
+                >
+                  <div className="px-3 py-2 h-full flex items-center justify-center">
+                    <Checkbox
+                      checked={isAllCurrentPageRowsSelected}
+                      onCheckedChange={(checked) => handleSelectAllRows(!!checked)}
+                      aria-label="Select all rows on current page"
+                      disabled={paginatedData.length === 0}
+                    />
+                  </div>
                 </TableHead>
               )}
-              {visibleColumnDefs.map((col) => {
-                const isReorderable = col.reorderable !== false;
+              {orderedVisibleColumnDefs.map((col, index) => {
+                const isReorderable = col.reorderable !== false && !state.pinnedColumns.left.includes(col.field) && !state.pinnedColumns.right.includes(col.field);
+                const currentWidth = state.columnWidths[col.field] || col.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
+                const isLeftPinned = state.pinnedColumns.left.includes(col.field);
+                const isRightPinned = state.pinnedColumns.right.includes(col.field);
+                
+                let stickyStyle: React.CSSProperties = {};
+                if (isLeftPinned) {
+                  stickyStyle.left = `${stickyOffsets.left[col.field] || 0}px`;
+                } else if (isRightPinned) {
+                  stickyStyle.right = `${stickyOffsets.right[col.field] || 0}px`;
+                }
+
                 return (
                   <TableHead
                     key={col.field}
                     style={{ 
-                      width: state.columnWidths[col.field] || col.defaultWidth, 
-                      minWidth: col.minWidth || state.columnWidths[col.field] || col.defaultWidth || '50px',
+                      width: currentWidth, 
+                      minWidth: col.minWidth || currentWidth || '50px',
+                      ...stickyStyle
                     }}
-                    className="px-0 py-0 relative" 
+                    className={cn(
+                      "px-0 py-0 relative",
+                      (isLeftPinned || isRightPinned) && "sticky-header-cell",
+                      isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
+                      isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow"
+                    )} 
                     draggable={isReorderable}
                     onDragStart={(e) => isReorderable && handleDragStart(col.field, e)}
                     onDragOver={(e) => isReorderable && handleDragOver(e, col.field)}
@@ -465,9 +585,13 @@ export function DataGrid<TData extends { id: string | number }>({
                       onSort={handleSort}
                       onFilterChange={handleColumnFilterChange}
                       columnFilters={state.columnFilters}
-                      currentWidth={state.columnWidths[col.field] || col.defaultWidth || '150px'}
+                      currentWidth={currentWidth}
                       onColumnWidthChange={handleColumnWidthChange}
+                      onPinColumn={handlePinColumn}
                       isDraggable={isReorderable}
+                      currentPinnedState={
+                        isLeftPinned ? 'left' : isRightPinned ? 'right' : null
+                      }
                     />
                   </TableHead>
                 );
@@ -476,14 +600,20 @@ export function DataGrid<TData extends { id: string | number }>({
           </TableHeader>
           <TableBody>
             {paginatedData.length > 0 ? (
-              paginatedData.map((row, rowIndex) => (
+              paginatedData.map((row) => (
                 <TableRow 
-                  key={row.id ?? rowIndex}
+                  key={row.id}
                   data-state={state.selectedRows.has(row.id) ? "selected" : ""}
                   className={cn(state.selectedRows.has(row.id) && "bg-muted/50")}
                 >
                   {enableRowSelection && (
-                    <TableCell className="px-3 py-2">
+                    <TableCell 
+                      className="px-3 py-2 sticky-body-cell"
+                      style={{
+                        left: 0,
+                        zIndex: 11 // Higher than other body cells in case of overlap
+                      }}
+                    >
                       <Checkbox
                         checked={state.selectedRows.has(row.id)}
                         onCheckedChange={(checked) => handleSelectRow(row.id, !!checked)}
@@ -492,25 +622,43 @@ export function DataGrid<TData extends { id: string | number }>({
                       />
                     </TableCell>
                   )}
-                  {visibleColumnDefs.map((col) => (
+                  {orderedVisibleColumnDefs.map((col) => {
+                     const isLeftPinned = state.pinnedColumns.left.includes(col.field);
+                     const isRightPinned = state.pinnedColumns.right.includes(col.field);
+                     let stickyStyle: React.CSSProperties = {};
+                      if (isLeftPinned) {
+                        stickyStyle.left = `${stickyOffsets.left[col.field] || 0}px`;
+                      } else if (isRightPinned) {
+                        stickyStyle.right = `${stickyOffsets.right[col.field] || 0}px`;
+                      }
+
+                    return (
                     <TableCell 
                       key={col.field} 
-                      className={cn("px-3 py-2 truncate", col.editable && "cursor-pointer")}
+                      className={cn(
+                        "px-3 py-2 truncate", 
+                        col.editable && "cursor-pointer",
+                        (isLeftPinned || isRightPinned) && "sticky-body-cell",
+                        isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
+                        isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow"
+                        )}
                       style={{ 
-                        width: state.columnWidths[col.field] || col.defaultWidth,
-                        maxWidth: state.columnWidths[col.field] || col.defaultWidth, 
+                        width: state.columnWidths[col.field] || col.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                        maxWidth: state.columnWidths[col.field] || col.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                        ...stickyStyle
                       }}
                       title={String(getCellValue(row, col.field))}
                       onDoubleClick={() => col.editable && handleCellDoubleClick(row.id, col.field, getCellValue(row, col.field))}
                     >
                       {renderCellContent(row, col)}
                     </TableCell>
-                  ))}
+                  )}
+                  )}
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={visibleColumnDefs.length + (enableRowSelection ? 1 : 0)} className="h-24 text-center">
+                <TableCell colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} className="h-24 text-center">
                   No results found.
                 </TableCell>
               </TableRow>
