@@ -30,10 +30,11 @@ const getCellValue = <TData,>(row: TData, field: keyof TData & string): any => {
 
 export function DataGrid<TData extends { id: string | number }>({
   data: initialData,
-  columnDefs: initialColumnDefs, // Renamed to avoid conflict with memoized columnDefs
+  columnDefs: initialColumnDefs, 
   defaultPageSize = 10,
   pageSizeOptions = [10, 25, 50, 100],
   enableRowSelection = true,
+  onCellEdit,
 }: DataGridProps<TData>) {
   const [state, setState] = React.useState<DataGridState<TData>>(() => {
     const defaultWidths: Record<keyof TData & string, string | number> = {};
@@ -52,6 +53,8 @@ export function DataGrid<TData extends { id: string | number }>({
       columnWidths: defaultWidths,
       draggedColumn: null,
       draggedOverColumn: null,
+      editingCell: null,
+      editInputValue: '',
     };
   });
 
@@ -67,7 +70,6 @@ export function DataGrid<TData extends { id: string | number }>({
     return Array.from(uniqueValues).sort();
   }, [initialData]);
 
-  // This processes initialColumnDefs to add filterOptions for select filters
   const processedColumnDefs = React.useMemo(() => {
     return initialColumnDefs.map(colDef => {
       if (colDef.filterable && colDef.filterType === 'select' && !colDef.filterOptions) {
@@ -158,13 +160,12 @@ export function DataGrid<TData extends { id: string | number }>({
 
   const handleDragStart = (field: keyof TData & string, event: React.DragEvent) => {
     event.dataTransfer.setData('text/plain', field);
-    // Add a class to body to disable text selection cursor while dragging
     document.body.classList.add('dragging');
     setState(prevState => ({ ...prevState, draggedColumn: field }));
   };
   
   const handleDragOver = (event: React.DragEvent, targetField: keyof TData & string) => {
-    event.preventDefault(); // Necessary to allow drop
+    event.preventDefault(); 
     if (state.draggedColumn && state.draggedColumn !== targetField) {
       setState(prevState => ({ ...prevState, draggedOverColumn: targetField }));
     }
@@ -186,7 +187,6 @@ export function DataGrid<TData extends { id: string | number }>({
         const targetIndex = newColumnOrder.indexOf(targetField);
   
         if (sourceIndex > -1 && targetIndex > -1) {
-          // Remove source and insert at target
           const [removed] = newColumnOrder.splice(sourceIndex, 1);
           newColumnOrder.splice(targetIndex, 0, removed);
         }
@@ -202,6 +202,50 @@ export function DataGrid<TData extends { id: string | number }>({
     setState(prevState => ({ ...prevState, draggedColumn: null, draggedOverColumn: null }));
   };
 
+  const handleCellDoubleClick = (rowId: string | number, field: keyof TData & string, currentValue: any) => {
+    const columnDef = processedColumnDefs.find(col => col.field === field);
+    if (columnDef?.editable) {
+      setState(prevState => ({
+        ...prevState,
+        editingCell: { rowId, field },
+        editInputValue: currentValue,
+      }));
+    }
+  };
+
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setState(prevState => ({ ...prevState, editInputValue: e.target.value }));
+  };
+
+  const handleEditCommit = () => {
+    if (state.editingCell && onCellEdit) {
+      const { rowId, field } = state.editingCell;
+      let valueToCommit = state.editInputValue;
+      const columnDef = processedColumnDefs.find(col => col.field === field);
+      if (columnDef?.filterType === 'number' || typeof getCellValue(initialData.find(r => r.id === rowId)!, field) === 'number') {
+        valueToCommit = parseFloat(state.editInputValue);
+        if (isNaN(valueToCommit)) {
+          valueToCommit = getCellValue(initialData.find(r => r.id === rowId)!, field); // Revert if not a number
+        }
+      }
+      onCellEdit(rowId, field, valueToCommit);
+    }
+    setState(prevState => ({ ...prevState, editingCell: null, editInputValue: '' }));
+  };
+
+  const handleEditCancel = () => {
+    setState(prevState => ({ ...prevState, editingCell: null, editInputValue: '' }));
+  };
+
+  const handleEditInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleEditCommit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleEditCancel();
+    }
+  };
 
   const filteredData = React.useMemo(() => {
     if (!initialData) return [];
@@ -210,7 +254,7 @@ export function DataGrid<TData extends { id: string | number }>({
     if (state.globalFilter) {
       const lowerGlobalFilter = state.globalFilter.toLowerCase();
       dataToFilter = dataToFilter.filter((row) =>
-        processedColumnDefs.some((col) => { // Use processedColumnDefs here
+        processedColumnDefs.some((col) => {
           if (state.visibleColumns.includes(col.field)) {
             const cellValue = getCellValue(row, col.field);
             return String(cellValue).toLowerCase().includes(lowerGlobalFilter);
@@ -284,7 +328,7 @@ export function DataGrid<TData extends { id: string | number }>({
         return direction === 'asc' ? valA.getTime() - valB.getTime() : valB.getTime() - valA.getTime();
       }
       if (typeof valA === 'string' && typeof valB === 'string') {
-        return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(String(valA));
       }
       return direction === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
     });
@@ -302,7 +346,7 @@ export function DataGrid<TData extends { id: string | number }>({
     return state.columnOrder
       .filter(field => state.visibleColumns.includes(field))
       .map(field => colDefsMap.get(field)!)
-      .filter(Boolean); // Ensure no undefined columns if something goes wrong
+      .filter(Boolean);
   }, [processedColumnDefs, state.columnOrder, state.visibleColumns]);
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.every(row => state.selectedRows.has(row.id));
@@ -320,6 +364,22 @@ export function DataGrid<TData extends { id: string | number }>({
 
   const renderCellContent = (row: TData, col: ColumnDefinition<TData>): React.ReactNode => {
     const cellValue = getCellValue(row, col.field);
+    if (state.editingCell && state.editingCell.rowId === row.id && state.editingCell.field === col.field) {
+      const colDef = processedColumnDefs.find(c => c.field === col.field);
+      const inputType = colDef?.filterType === 'number' || typeof cellValue === 'number' ? 'number' : 'text';
+      return (
+        <Input
+          type={inputType}
+          value={state.editInputValue}
+          onChange={handleEditInputChange}
+          onBlur={handleEditCommit}
+          onKeyDown={handleEditInputKeyDown}
+          autoFocus
+          className="h-full p-1 border-ring" // Adjust styling as needed
+        />
+      );
+    }
+
     if (col.field === 'age') {
       return <span className="text-right w-full block">{cellValue}</span>;
     }
@@ -361,7 +421,7 @@ export function DataGrid<TData extends { id: string | number }>({
           aria-label="Global search input"
         />
         <ColumnVisibilityToggle
-          allColumns={processedColumnDefs} // Use processed for all available columns
+          allColumns={processedColumnDefs}
           visibleColumns={state.visibleColumns}
           onVisibilityChange={handleColumnVisibilityChange}
         />
@@ -371,7 +431,7 @@ export function DataGrid<TData extends { id: string | number }>({
           <TableHeader>
             <TableRow>
               {enableRowSelection && (
-                <TableHead className="w-[50px] px-3 py-2 align-top"> {/* align-top for select all */}
+                <TableHead className="w-[50px] px-3 py-2 align-top">
                   <Checkbox
                     checked={isAllCurrentPageRowsSelected}
                     onCheckedChange={(checked) => handleSelectAllRows(!!checked)}
@@ -387,9 +447,9 @@ export function DataGrid<TData extends { id: string | number }>({
                     key={col.field}
                     style={{ 
                       width: state.columnWidths[col.field] || col.defaultWidth, 
-                      minWidth: col.minWidth || state.columnWidths[col.field] || col.defaultWidth || '50px', // Ensure minWidth respects current or default
+                      minWidth: col.minWidth || state.columnWidths[col.field] || col.defaultWidth || '50px',
                     }}
-                    className="px-0 py-0 relative" // py-0 for header cell to control padding, relative for resize handle
+                    className="px-0 py-0 relative" 
                     draggable={isReorderable}
                     onDragStart={(e) => isReorderable && handleDragStart(col.field, e)}
                     onDragOver={(e) => isReorderable && handleDragOver(e, col.field)}
@@ -435,12 +495,13 @@ export function DataGrid<TData extends { id: string | number }>({
                   {visibleColumnDefs.map((col) => (
                     <TableCell 
                       key={col.field} 
-                      className="px-3 py-2 truncate"
+                      className={cn("px-3 py-2 truncate", col.editable && "cursor-pointer")}
                       style={{ 
                         width: state.columnWidths[col.field] || col.defaultWidth,
                         maxWidth: state.columnWidths[col.field] || col.defaultWidth, 
                       }}
                       title={String(getCellValue(row, col.field))}
+                      onDoubleClick={() => col.editable && handleCellDoubleClick(row.id, col.field, getCellValue(row, col.field))}
                     >
                       {renderCellContent(row, col)}
                     </TableCell>

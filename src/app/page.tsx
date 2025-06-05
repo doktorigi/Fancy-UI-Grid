@@ -1,10 +1,9 @@
 
+"use client";
+import * as React from 'react';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition } from '@/types/data-grid';
 import { Badge } from '@/components/ui/badge';
-// Icon components are no longer directly used in columnDefs,
-// but DataGridHeaderCell will need them, so keep imports if they are used elsewhere or for reference.
-// import { Mail, Users, CalendarDays, Hash, Edit3, Activity } from 'lucide-react';
 
 interface Person {
   id: number;
@@ -18,7 +17,7 @@ interface Person {
   progress: number; // 0-100
 }
 
-const sampleData: Person[] = [
+const initialSampleData: Person[] = [
   { id: 1, firstName: 'John', lastName: 'Doe', age: 30, email: 'john.doe@example.com', isActive: true, registrationDate: '2023-01-15T10:00:00Z', city: 'New York', progress: 75 },
   { id: 2, firstName: 'Jane', lastName: 'Smith', age: 25, email: 'jane.smith@example.com', isActive: false, registrationDate: '2022-11-20T14:30:00Z', city: 'London', progress: 50 },
   { id: 3, firstName: 'Alice', lastName: 'Johnson', age: 35, email: 'alice.johnson@example.com', isActive: true, registrationDate: '2023-03-10T08:00:00Z', city: 'Paris', progress: 90 },
@@ -40,6 +39,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     sortable: true,
     filterable: true,
     filterType: 'text',
+    editable: true,
     defaultWidth: '150px',
     iconName: 'Users',
   },
@@ -49,6 +49,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     sortable: true,
     filterable: true,
     filterType: 'text',
+    editable: true,
     defaultWidth: '150px',
     iconName: 'Users',
   },
@@ -58,9 +59,9 @@ const columnDefs: ColumnDefinition<Person>[] = [
     sortable: true,
     filterable: true,
     filterType: 'number',
+    editable: true,
     defaultWidth: '100px',
     iconName: 'Hash',
-    // cellRenderer removed, will be handled in DataGrid.tsx
   },
   {
     field: 'email',
@@ -68,6 +69,7 @@ const columnDefs: ColumnDefinition<Person>[] = [
     sortable: true,
     filterable: true,
     filterType: 'text',
+    editable: true,
     defaultWidth: '250px',
     iconName: 'Mail',
   },
@@ -79,7 +81,6 @@ const columnDefs: ColumnDefinition<Person>[] = [
     filterType: 'boolean',
     defaultWidth: '120px',
     iconName: 'Activity',
-    // cellRenderer removed, will be handled in DataGrid.tsx
   },
   {
     field: 'registrationDate',
@@ -89,7 +90,6 @@ const columnDefs: ColumnDefinition<Person>[] = [
     filterType: 'date',
     defaultWidth: '180px',
     iconName: 'CalendarDays',
-    // cellRenderer removed, will be handled in DataGrid.tsx
   },
   {
     field: 'city',
@@ -106,12 +106,22 @@ const columnDefs: ColumnDefinition<Person>[] = [
     sortable: true,
     defaultWidth: '150px',
     iconName: 'Hash',
-    // cellRenderer removed, will be handled in DataGrid.tsx
+    editable: true,
   },
 ];
 
 
 export default function Home() {
+  const [gridData, setGridData] = React.useState<Person[]>(initialSampleData);
+
+  const handleCellEdit = (rowId: string | number, field: keyof Person, value: any) => {
+    setGridData(prevData =>
+      prevData.map(row =>
+        row.id === rowId ? { ...row, [field]: value } : row
+      )
+    );
+  };
+
   return (
     <main className="container mx-auto py-10 px-4">
       <header className="mb-8">
@@ -124,11 +134,12 @@ export default function Home() {
       </header>
       
       <DataGrid<Person>
-        data={sampleData}
+        data={gridData}
         columnDefs={columnDefs}
         defaultPageSize={5}
         pageSizeOptions={[5, 10, 15]}
         enableRowSelection={true}
+        onCellEdit={handleCellEdit}
       />
     </main>
   );

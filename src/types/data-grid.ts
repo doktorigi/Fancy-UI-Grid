@@ -12,6 +12,7 @@ export interface ColumnDefinition<TData = any> {
   filterable?: boolean;
   filterType?: FilterType;
   hideable?: boolean; // Default true
+  editable?: boolean; // Default false
   headerRenderer?: () => React.ReactNode;
   defaultWidth?: string | number;
   minWidth?: string | number; // Minimum width for resizing
@@ -63,6 +64,7 @@ export interface DataGridProps<TData = any> {
   defaultPageSize?: number;
   pageSizeOptions?: number[];
   enableRowSelection?: boolean;
+  onCellEdit?: (rowId: string | number, field: keyof TData & string, value: any) => void;
 }
 
 export interface DataGridState<TData = any> {
@@ -77,5 +79,6 @@ export interface DataGridState<TData = any> {
   columnWidths: Record<keyof TData & string, string | number>; // For resizing
   draggedColumn: (keyof TData & string) | null; // For reordering visual
   draggedOverColumn: (keyof TData & string) | null; // For reordering visual feedback
+  editingCell?: { rowId: string | number; field: keyof TData & string } | null;
+  editInputValue?: any;
 }
-
