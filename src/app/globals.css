@@ -5,33 +5,33 @@
 
 @layer base {
   :root {
-    --background: 0 0% 94.1%; /* #F0F0F0 Light Gray */
-    --foreground: 240 10% 3.9%; /* Dark Blue-Gray */
+    --background: 0 0% 98%; /* #F9FAFB - Light Gray, from mockup bg-gray-50 */
+    --foreground: 220 9% 23%; /* Dark Blue-Gray for text */
 
     --card: 0 0% 100%; /* White */
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 220 9% 23%;
 
     --popover: 0 0% 100%; /* White */
-    --popover-foreground: 240 10% 3.9%;
+    --popover-foreground: 220 9% 23%;
 
-    --primary: 180 100% 25.1%; /* Teal #008080 */
-    --primary-foreground: 180 100% 96%; /* Light Teal/White */
+    --primary: 221 83% 53%; /* Blue from mockup (e.g., bg-blue-600) */
+    --primary-foreground: 0 0% 100%; /* White for text on primary */
 
-    --secondary: 180 40% 90%; /* Lighter Teal */
-    --secondary-foreground: 180 100% 20%; /* Dark Teal for text on secondary */
+    --secondary: 220 13% 91%; /* Lighter Gray (e.g. Tailwind gray-200) */
+    --secondary-foreground: 220 9% 23%; /* Dark Blue-Gray for text on secondary */
 
-    --muted: 0 0% 90%; /* Slightly darker than background */
-    --muted-foreground: 0 0% 45.1%; /* Default Muted Foreground */
+    --muted: 220 14% 96%; /* Light Gray for muted backgrounds (e.g. Tailwind gray-100) */
+    --muted-foreground: 220 9% 46%; /* Gray for muted text */
 
-    --accent: 240 100% 27.3%; /* Dark Blue #00008B */
-    --accent-foreground: 240 100% 96%; /* Light Blue/White */
+    --accent: 145 70% 36%; /* Green from mockup (e.g., bg-green-600) */
+    --accent-foreground: 0 0% 100%; /* White for text on accent */
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 0 0% 87%; /* Subtle Border */
-    --input: 0 0% 91%; /* Input background, slightly off background */
-    --ring: 180 100% 25.1%; /* Teal for focus rings */
+    --border: 220 13% 88%; /* Subtle Border (e.g. Tailwind gray-300) */
+    --input: 0 0% 100%; /* Input background - white */
+    --ring: 221 83% 53%; /* Blue for focus rings */
 
     --radius: 0.5rem;
 
@@ -54,34 +54,33 @@
   }
 
   .dark {
-    /* Define dark theme variables if needed, or use a pre-defined dark theme */
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 94.1%;
+    --background: 220 15% 12%; /* Dark Blue-Gray */
+    --foreground: 0 0% 98%; /* Light Gray */
 
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 94.1%;
+    --card: 220 15% 15%;
+    --card-foreground: 0 0% 98%;
 
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 94.1%;
+    --popover: 220 15% 15%;
+    --popover-foreground: 0 0% 98%;
 
-    --primary: 180 100% 35%; /* Slightly lighter Teal for dark mode */
-    --primary-foreground: 180 80% 96%;
+    --primary: 221 75% 60%; /* Slightly lighter Blue for dark mode */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 180 40% 20%; /* Darker Teal variant */
-    --secondary-foreground: 180 50% 90%;
+    --secondary: 220 13% 25%; /* Darker Gray */
+    --secondary-foreground: 0 0% 90%;
 
-    --muted: 240 5% 15%;
+    --muted: 220 10% 20%;
     --muted-foreground: 0 0% 60%;
 
-    --accent: 240 100% 40%; /* Slightly lighter Dark Blue for dark mode */
-    --accent-foreground: 240 80% 96%;
+    --accent: 145 60% 45%; /* Slightly lighter Green for dark mode */
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 5% 20%;
-    --input: 240 5% 18%;
-    --ring: 180 100% 35%;
+    --border: 220 13% 30%;
+    --input: 220 13% 22%; /* Darker input for dark mode */
+    --ring: 221 75% 60%;
 
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
@@ -106,6 +105,9 @@
   }
   body {
     @apply bg-background text-foreground font-body;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-headline;
   }
 }
 
