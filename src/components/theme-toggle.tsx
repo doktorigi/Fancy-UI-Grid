@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -14,30 +15,28 @@ import {
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
-  const [currentIcon, setCurrentIcon] = React.useState(<Laptop className="h-5 w-5" />);
+  // Initialize currentIcon with a default. This will be rendered on the server
+  // and on the initial client render *before* the useEffect runs.
+  const [currentIcon, setCurrentIcon] = React.useState(<Laptop className="h-5 w-5" />)
 
   React.useEffect(() => {
+    // This effect runs only on the client after hydration.
+    // Here, 'theme' from useTheme() should be the resolved theme.
     if (theme === "light") {
       setCurrentIcon(<Sun className="h-5 w-5" />);
     } else if (theme === "dark") {
       setCurrentIcon(<Moon className="h-5 w-5" />);
-    } else { // system
-        // For system, we need to know the actual scheme.
-        // This is a simplification; a more robust solution might involve checking window.matchMedia.
-        // However, next-themes handles applying the correct class, so the button icon can reflect the 'system' choice.
-        setCurrentIcon(<Laptop className="h-5 w-5" />);
+    } else { // 'system' or undefined defaults to Laptop icon
+      setCurrentIcon(<Laptop className="h-5 w-5" />);
     }
-  }, [theme]);
+  }, [theme]); // Re-run when theme changes
 
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="icon" className="shrink-0">
-          {/* This attempts to show the correct icon based on theme immediately */}
-          {theme === 'light' && <Sun className="h-5 w-5" />}
-          {theme === 'dark' && <Moon className="h-5 w-5" />}
-          {theme === 'system' && <Laptop className="h-5 w-5" />}
+          {currentIcon} {/* Use the state variable here */}
           <span className="sr-only">Toggle theme</span>
         </Button>
       </DropdownMenuTrigger>
