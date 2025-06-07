@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition } from '@/types/data-grid';
-import { ArrowLeft, Table as TableIcon } from 'lucide-react'; // TableIcon can be used for 'Excel Rater'
+import { ArrowLeft, Table as TableIcon } from 'lucide-react';
 import type { ResultPolicy } from '@/app/page';
 import { Badge } from '@/components/ui/badge';
 
@@ -93,13 +93,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       defaultWidth: '100px',
     },
     { 
-      field: 'id', // Using 'id' as a placeholder field for actions. It won't be displayed.
+      field: 'id', 
       headerText: 'Actions', 
       defaultWidth: '150px',
-      // This column won't be directly sortable/filterable by its content if it's just a button.
-      // We'll need a custom cell renderer for the button.
+      // This column might need a custom cell renderer for the button if 'id' is not the actual data to display.
+      // If we want an "Excel Rater" button per row, a custom cell renderer is the way.
+      // Example:
+      // cellRenderer: (params) => {
+      //   return <Button size="sm" onClick={() => handleExcelRaterClick(params.data)}> <TableIcon className="mr-1 h-3 w-3" /> Excel Rater </Button>;
+      // }
+      // For DataGrid.tsx, modifications to `renderCellContent` would be needed to support this.
+      // E.g., in renderCellContent:
+      // if (col.field === 'actionsFieldName' && col.cellRenderer) { // Or some other way to identify an action column
+      //   return col.cellRenderer({ data: row.originalRow as ResultPolicy, ...otherParams });
+      // }
     },
-  ], [resultsData]);
+  ], [resultsData]); // Rater version passed to resultsData map, so it's a dependency
 
 
   return (
@@ -110,6 +119,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           <Button 
             variant="outline"
             onClick={onBackToSearch}
+            className="uppercase tracking-wide font-medium"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Search
@@ -153,13 +163,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           defaultPageSize={5}
           pageSizeOptions={[5, 10, 20, 50]}
           enableRowSelection={false}
-          // To add the "Excel Rater" button, we'd modify `renderCellContent` in DataGrid.tsx
-          // to look for a specific column field (e.g., one named 'actions' or by a flag in colDef)
-          // and render a button there. For now, this is a structural setup.
-          // Example modification in DataGrid.tsx's renderCellContent for 'actions' column:
-          // if (col.field === 'actionsFieldName') { // Assuming 'actionsFieldName' is the field for the action button
-          //   return <Button size="sm" onClick={() => handleExcelRaterClick(row.originalRow as ResultPolicy)}> <TableIcon className="mr-1 h-3 w-3" /> Excel Rater </Button>;
-          // }
         />
       </CardContent>
     </Card>

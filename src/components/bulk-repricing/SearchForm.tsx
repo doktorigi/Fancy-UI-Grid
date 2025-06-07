@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition } from '@/types/data-grid';
-import { Search, Play } from 'lucide-react'; // Replaced PlayArrow with Play
+import { Search, Play } from 'lucide-react';
 import type { Policy } from '@/app/page';
 
 
@@ -267,6 +267,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                   onClick={handleSearch}
                   variant="default"
                   size="default"
+                  className="uppercase tracking-wide font-medium"
                 >
                   <Search className="mr-2 h-4 w-4" />
                   Search
@@ -284,7 +285,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                 columnDefs={searchGridColumnDefs}
                 defaultPageSize={5}
                 pageSizeOptions={[5, 10, 20]}
-                enableRowSelection={true} // Mockup shows selected items
+                enableRowSelection={true}
              />
         </div>
         
@@ -323,7 +324,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
               onClick={handleActualExecute}
               variant="default"
               size="lg"
-              className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
+              className="w-full bg-accent hover:bg-accent/90 text-accent-foreground uppercase tracking-wide font-medium"
             >
               <Play className="mr-2 h-5 w-5" /> 
               Execute Repricing
