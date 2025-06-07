@@ -67,28 +67,36 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
   };
 
   const productOptions = [
-    { value: '', label: 'Select Product' }, { value: 'xpltxl', label: 'XPLTXL' },
-    { value: 'cpltpl', label: 'CPLTPL' }, { value: 'umb', label: 'UMB' },
-    { value: 'tum', label: 'TUM' }, { value: 'pumb', label: 'PUMB' }, { value: 'cpl', label: 'CPL' }
+    { value: 'xpltxl', label: 'XPLTXL' },
+    { value: 'cpltpl', label: 'CPLTPL' },
+    { value: 'umb', label: 'UMB' },
+    { value: 'tum', label: 'TUM' },
+    { value: 'pumb', label: 'PUMB' },
+    { value: 'cpl', label: 'CPL' }
   ];
   const programOptions = [
-    { value: '', label: 'All' }, { value: 'Umbrella', label: 'Umbrella' },
-    { value: 'Target Umbrella', label: 'Target Umbrella' }, { value: 'CPL', label: 'CPL' }
+    { value: 'Umbrella', label: 'Umbrella' },
+    { value: 'Target Umbrella', label: 'Target Umbrella' },
+    { value: 'CPL', label: 'CPL' }
   ];
   const companyOptions = [
-    { value: '', label: 'All' }, { value: 'ABC Insurance', label: 'ABC Insurance' },
-    { value: 'XYZ Insurance', label: 'XYZ Insurance' }, { value: 'DEF Insurance', label: 'DEF Insurance' }
+    { value: 'ABC Insurance', label: 'ABC Insurance' },
+    { value: 'XYZ Insurance', label: 'XYZ Insurance' },
+    { value: 'DEF Insurance', label: 'DEF Insurance' }
   ];
   const stateOptions = [
-    { value: '', label: 'All' }, { value: 'CA', label: 'California' },
-    { value: 'FL', label: 'Florida' }, { value: 'NY', label: 'New York' }, { value: 'TX', label: 'Texas' }
+    { value: 'CA', label: 'California' },
+    { value: 'FL', label: 'Florida' },
+    { value: 'NY', label: 'New York' },
+    { value: 'TX', label: 'Texas' }
   ];
   const raterVersionOptions = [
-    { value: '', label: 'Select Version' }, { value: '1.0.0', label: '1.0.0 (Current)' },
+    { value: '1.0.0', label: '1.0.0 (Current)' },
     { value: '1.1.0', label: '1.1.0 (Proposed)' }
   ];
   const effectiveDateOptions = [
-    { value: 'actual', label: 'Actual effective date' }, { value: 'prior', label: 'Prior effective date' },
+    { value: 'actual', label: 'Actual effective date' },
+    { value: 'prior', label: 'Prior effective date' },
     { value: 'onlevel', label: 'On-level' }
   ];
 
@@ -101,7 +109,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
       sortable: true, 
       filterable: true, 
       filterType: 'select', 
-      filterOptions: stateOptions.filter(opt => opt.value !== '').map(opt => ({label: opt.label, value: opt.value})),
+      filterOptions: stateOptions.map(opt => ({label: opt.label, value: opt.value})), // Already correct as it doesn't include an "All" option with value=""
       defaultWidth: '120px',
     },
     { field: 'policyNo', headerText: 'Policy No.', sortable: true, filterable: true, filterType: 'text', defaultWidth: '120px' },
@@ -114,7 +122,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
       filterType: 'number', 
       defaultWidth: '150px',
     },
-  ], []);
+  ], [stateOptions]); // Ensure stateOptions is a dependency if used in filterOptions
 
 
   return (
@@ -133,6 +141,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                     <SelectValue placeholder="All States" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="">All States</SelectItem> {/* Add explicit "All" item if needed, or handle through placeholder */}
                     {stateOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
@@ -146,6 +155,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                     <SelectValue placeholder="All Programs" />
                   </SelectTrigger>
                   <SelectContent>
+                     <SelectItem value="">All Programs</SelectItem>
                     {programOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
@@ -159,6 +169,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                     <SelectValue placeholder="All Companies" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="">All Companies</SelectItem>
                     {companyOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
