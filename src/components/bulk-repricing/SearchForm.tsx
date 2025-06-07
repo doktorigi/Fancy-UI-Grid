@@ -109,7 +109,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
       sortable: true, 
       filterable: true, 
       filterType: 'select', 
-      filterOptions: stateOptions.map(opt => ({label: opt.label, value: opt.value})), // Already correct as it doesn't include an "All" option with value=""
+      filterOptions: stateOptions.map(opt => ({label: opt.label, value: opt.value})),
       defaultWidth: '120px',
     },
     { field: 'policyNo', headerText: 'Policy No.', sortable: true, filterable: true, filterType: 'text', defaultWidth: '120px' },
@@ -122,7 +122,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
       filterType: 'number', 
       defaultWidth: '150px',
     },
-  ], [stateOptions]); // Ensure stateOptions is a dependency if used in filterOptions
+  ], [stateOptions]);
 
 
   return (
@@ -141,7 +141,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                     <SelectValue placeholder="All States" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All States</SelectItem> {/* Add explicit "All" item if needed, or handle through placeholder */}
                     {stateOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
@@ -155,7 +154,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                     <SelectValue placeholder="All Programs" />
                   </SelectTrigger>
                   <SelectContent>
-                     <SelectItem value="">All Programs</SelectItem>
                     {programOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
@@ -169,7 +167,6 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onExecute }) => {
                     <SelectValue placeholder="All Companies" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All Companies</SelectItem>
                     {companyOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
