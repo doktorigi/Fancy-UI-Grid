@@ -18,8 +18,11 @@ function escapeCsvCell(cellValue: any): string {
     return '';
   }
   const stringValue = String(cellValue);
-  // If the string contains a comma, double quote, or newline, wrap it in double quotes
-  // and escape any existing double quotes by doubling them.
+  // Prefix formula-injection characters so spreadsheet apps don't execute them
+  if (/^[=+\-@\t\r|]/.test(stringValue)) {
+    return `"\t${stringValue.replace(/"/g, '""')}"`;
+  }
+  // Wrap in quotes if value contains a comma, double quote, or newline
   if (/[",\r\n]/.test(stringValue)) {
     return `"${stringValue.replace(/"/g, '""')}"`;
   }
