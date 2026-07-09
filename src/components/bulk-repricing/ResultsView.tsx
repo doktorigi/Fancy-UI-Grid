@@ -11,7 +11,7 @@ import type { ResultPolicy } from '@/app/page';
 import { Badge } from '@/components/ui/badge';
 
 
-const initialResultsData: ResultPolicy[] = [
+const initialResultsData: Omit<ResultPolicy, 'premium'>[] = [
   { id: 1, company: 'ABC Insurance', program: 'Target Umbrella', policyNo: '123456', state: 'CA', currentPremium: 1250.00, newPremium: 1312.50, difference: 62.50, policyEff: '2025-01-15', raterVersion: '1.1.0' },
   { id: 2, company: 'XYZ Insurance', program: 'CPL', policyNo: '123457', state: 'CA', currentPremium: 980.00, newPremium: 970.20, difference: -9.80, policyEff: '2025-02-10', raterVersion: '1.1.0' },
   { id: 3, company: 'ABC Insurance', program: 'Target Umbrella', policyNo: '123458', state: 'FL', currentPremium: 1450.00, newPremium: 1595.00, difference: 145.00, policyEff: '2025-03-01', raterVersion: '1.1.0' },
@@ -35,7 +35,7 @@ const formatCurrency = (value: number | undefined) => {
 };
 
 export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackToSearch }) => {
-  const [resultsData, setResultsData] = useState<ResultPolicy[]>(initialResultsData.map(d => ({...d, raterVersion})));
+  const [resultsData, setResultsData] = useState<ResultPolicy[]>(initialResultsData.map(d => ({...d, premium: d.currentPremium, raterVersion})));
   
   const summaryTotalPolicies = resultsData.length;
   const summarySourcePremium = resultsData.reduce((sum, row) => sum + row.currentPremium, 0);
@@ -60,29 +60,39 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterOptions: [...new Set(resultsData.map(r => r.state))].map(s => ({label: s, value: s})),
       defaultWidth: '100px',
     },
-    { 
-      field: 'currentPremium', 
-      headerText: 'Current Premium', 
-      sortable: true, 
-      filterable: true, 
-      filterType: 'number', 
+    {
+      field: 'currentPremium',
+      headerText: 'Current Premium',
+      sortable: true,
+      filterable: true,
+      filterType: 'number',
       defaultWidth: '150px',
+      aggregate: 'sum',
+      cellRenderer: (value) => formatCurrency(value),
     },
-    { 
-      field: 'newPremium', 
-      headerText: 'New Premium', 
-      sortable: true, 
-      filterable: true, 
-      filterType: 'number', 
+    {
+      field: 'newPremium',
+      headerText: 'New Premium',
+      sortable: true,
+      filterable: true,
+      filterType: 'number',
       defaultWidth: '150px',
+      aggregate: 'sum',
+      cellRenderer: (value) => formatCurrency(value),
     },
-    { 
-      field: 'difference', 
-      headerText: 'Difference', 
-      sortable: true, 
-      filterable: true, 
-      filterType: 'number', 
+    {
+      field: 'difference',
+      headerText: 'Difference',
+      sortable: true,
+      filterable: true,
+      filterType: 'number',
       defaultWidth: '120px',
+      aggregate: 'sum',
+      cellRenderer: (value) => (
+        <span className={value > 0 ? 'text-red-600 dark:text-red-400' : value < 0 ? 'text-green-600 dark:text-green-400' : ''}>
+          {formatCurrency(value)}
+        </span>
+      ),
     },
     { 
       field: 'raterVersion', 
@@ -92,21 +102,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterType: 'text', 
       defaultWidth: '100px',
     },
-    { 
-      field: 'id', 
-      headerText: 'Actions', 
+    {
+      field: 'id',
+      headerText: 'Actions',
       defaultWidth: '150px',
-      // This column might need a custom cell renderer for the button if 'id' is not the actual data to display.
-      // If we want an "Excel Rater" button per row, a custom cell renderer is the way.
-      // Example:
-      // cellRenderer: (params) => {
-      //   return <Button size="sm" onClick={() => handleExcelRaterClick(params.data)}> <TableIcon className="mr-1 h-3 w-3" /> Excel Rater </Button>;
-      // }
-      // For DataGrid.tsx, modifications to `renderCellContent` would be needed to support this.
-      // E.g., in renderCellContent:
-      // if (col.field === 'actionsFieldName' && col.cellRenderer) { // Or some other way to identify an action column
-      //   return col.cellRenderer({ data: row.originalRow as ResultPolicy, ...otherParams });
-      // }
+      sortable: false,
+      groupable: false,
+      cellRenderer: (_value, row) => (
+        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleExcelRaterClick(row); }}>
+          <TableIcon className="mr-1 h-3 w-3" /> Excel Rater
+        </Button>
+      ),
     },
   ], [resultsData]); // Rater version passed to resultsData map, so it's a dependency
 
@@ -162,7 +168,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           columnDefs={resultsGridColumnDefs}
           defaultPageSize={5}
           pageSizeOptions={[5, 10, 20, 50]}
-          enableRowSelection={false}
+          enableRowSelection={true}
+          enableGroupingPanel={true}
+          storageKey="repricingResultsGrid"
         />
       </CardContent>
     </Card>

@@ -29,7 +29,7 @@ import { DataGridGroupingPanel } from './DataGridGroupingPanel';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ChevronRight, ChevronDown, FileDown, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileDown, FilterX, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportToCsv, exportToXlsx } from '@/lib/exportUtils';
 import {
@@ -53,12 +53,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   onCellEdit,
   isTreeData = false,
   treeColumn: specifiedTreeColumn,
-  enableGroupingPanel = false, 
+  enableGroupingPanel = false,
+  storageKey = LOCAL_STORAGE_KEY,
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
 
   const [state, setState] = React.useState<DataGridState<TData>>(() => {
-    const defaultWidths: Record<keyof TData & string, string | number> = {};
+    const defaultWidths = {} as Record<keyof TData & string, string | number>;
     const initialPinnedLeftFromDefs: (keyof TData & string)[] = [];
     const initialPinnedRightFromDefs: (keyof TData & string)[] = [];
     const allFieldsFromDefs = initialColumnDefs.map(col => col.field);
@@ -101,7 +102,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedStateString = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const savedStateString = localStorage.getItem(storageKey);
       if (savedStateString) {
         try {
           const savedState = JSON.parse(savedStateString);
@@ -187,9 +188,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         groupedBy: state.groupedBy, 
         expandedGroups: Array.from(state.expandedGroups),
       };
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+      localStorage.setItem(storageKey, JSON.stringify(stateToSave));
     }
   }, [
+    storageKey,
     state.columnWidths,
     state.columnOrder,
     state.pinnedColumns,
@@ -261,7 +263,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     return flatList;
   }, []);
 
-  const baseDataForProcessing = React.useMemo(() => {
+  const baseDataForProcessing = React.useMemo<ProcessedRow<TData>[]>(() => {
     if (isTreeData) {
       return flattenTreeData(initialData || [], state.expandedRows);
     }
@@ -492,7 +494,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       setState(prevState => ({
         ...prevState,
         editingCell: { rowId, field },
-        editInputValue: getCellValue(row.originalRow, field),
+        editInputValue: getCellValue(row, field),
         focusedCell: { rowId, colField: field }, 
       }));
     }
@@ -746,6 +748,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             groupField: groupField,
             groupValue: currentGroupValue,
             groupKey: groupKey,
+            groupItems: currentGroupItems,
             isExpanded: state.expandedGroups.has(groupKey),
           } as ProcessedRow<TData>);
           if (state.expandedGroups.has(groupKey)) {
@@ -769,6 +772,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         groupField: groupField,
         groupValue: currentGroupValue,
         groupKey: groupKey,
+        groupItems: currentGroupItems,
         isExpanded: state.expandedGroups.has(groupKey),
       } as ProcessedRow<TData>);
        if (state.expandedGroups.has(groupKey)) {
@@ -837,6 +841,26 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
 
   const handleGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !state.editingCell) {
+      const selectedProcessedRows = sortedData.filter(r => !r.isGroupHeader && state.selectedRows.has(r.id));
+      let textToCopy = '';
+      if (selectedProcessedRows.length > 0) {
+        const header = orderedVisibleColumnDefs.map(c => c.headerText).join('\t');
+        const rows = selectedProcessedRows.map(r =>
+          orderedVisibleColumnDefs.map(c => String(getCellValue(r, c.field) ?? '')).join('\t')
+        );
+        textToCopy = [header, ...rows].join('\n');
+      } else if (state.focusedCell) {
+        const focusedRow = paginatedData.find(r => r.id === state.focusedCell!.rowId);
+        if (focusedRow) textToCopy = String(getCellValue(focusedRow, state.focusedCell.colField) ?? '');
+      }
+      if (textToCopy) {
+        e.preventDefault();
+        navigator.clipboard?.writeText(textToCopy);
+      }
+      return;
+    }
+
     if (!state.focusedCell && !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
       const firstFocusableRow = paginatedData.find(r => !r.isGroupHeader);
       if (firstFocusableRow && orderedVisibleColumnDefs.length > 0) {
@@ -998,6 +1022,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       );
     }
 
+    if (col.cellRenderer && !(isTreeData && treeColumn && col.field === treeColumn)) {
+      return col.cellRenderer(cellValue, row.originalRow);
+    }
+
     if (isTreeData && treeColumn && col.field === treeColumn) {
       const nameContent = (
         <div className="flex items-center gap-2">
@@ -1077,17 +1105,40 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const checkboxColumnWidth = '50px';
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
 
+  const computeAggregate = (items: ProcessedRow<TData>[], col: ColumnDefinition<TData>): string => {
+    if (col.aggregate === 'count') return String(items.length);
+    const nums = items
+      .map(item => parseFloat(String(getCellValue(item, col.field))))
+      .filter(n => !isNaN(n));
+    if (nums.length === 0) return '';
+    let result: number;
+    switch (col.aggregate) {
+      case 'sum': result = nums.reduce((a, b) => a + b, 0); break;
+      case 'avg': result = nums.reduce((a, b) => a + b, 0) / nums.length; break;
+      case 'min': result = Math.min(...nums); break;
+      case 'max': result = Math.max(...nums); break;
+      default: return '';
+    }
+    return result.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+
+  const aggregateLabels: Record<string, string> = { sum: 'Sum', avg: 'Avg', min: 'Min', max: 'Max', count: 'Count' };
+
   const handleExportCsv = () => {
-    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); 
-    exportToCsv(dataToExport, orderedVisibleColumnDefs.map(c => ({...c, field: c.field as (keyof TData & string)})), 'grid_export');
+    exportToCsv(sortedData, orderedVisibleColumnDefs, 'grid_export');
   };
 
   const handleExportXlsx = () => {
-    const dataToExport = sortedData.map(pr => pr.originalRow).filter(Boolean); 
-    exportToXlsx(dataToExport, orderedVisibleColumnDefs.map(c => ({...c, field: c.field as (keyof TData & string)})), 'grid_export');
+    exportToXlsx(sortedData, orderedVisibleColumnDefs, 'grid_export');
   };
 
   const renderedRowsCount = paginatedData.filter(r => !r.isGroupHeader).length;
+
+  const activeFilterCount = Object.keys(state.columnFilters).length + (state.globalFilter ? 1 : 0);
+
+  const handleClearAllFilters = () => {
+    setState(prevState => ({ ...prevState, globalFilter: '', columnFilters: {}, currentPage: 1 }));
+  };
 
 
   return (
@@ -1114,6 +1165,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           aria-label="Global search input"
         />
         <div className="flex items-center gap-2">
+          {activeFilterCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={handleClearAllFilters}>
+              <FilterX className="mr-2 h-4 w-4" />
+              Clear filters ({activeFilterCount})
+            </Button>
+          )}
           <ColumnVisibilityToggle
             allColumns={processedColumnDefs}
             visibleColumns={state.visibleColumns}
@@ -1239,7 +1296,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                             >
                               {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                             </button>
-                          <strong>{groupHeaderText}:</strong> {String(row.groupValue)}
+                          <strong>{groupHeaderText}:</strong>&nbsp;{String(row.groupValue)}
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            ({row.groupItems?.length ?? 0} item{(row.groupItems?.length ?? 0) === 1 ? '' : 's'}
+                            {orderedVisibleColumnDefs
+                              .filter(c => c.aggregate)
+                              .map(c => {
+                                const aggValue = computeAggregate(row.groupItems || [], c);
+                                return aggValue ? ` · ${aggregateLabels[c.aggregate!]} ${c.headerText}: ${aggValue}` : '';
+                              })
+                              .join('')})
+                          </span>
                         </div>
                       </TableCell>
                     </TableRow>

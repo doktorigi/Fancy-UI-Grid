@@ -1,81 +1,109 @@
-# Next.js Feature-Rich Data Grid
+# Fancy UI Grid
 
-This project is a feature-rich data grid component built with Next.js, React, ShadCN UI components, and Tailwind CSS. It's designed to be highly customizable and performant, inspired by enterprise-grade data grids.
+A feature-rich, open-source React data grid built with Next.js, ShadCN UI components, and Tailwind CSS. Designed to be highly customizable and performant, inspired by enterprise-grade data grids — free under the MIT license.
 
-## Getting Started
+## Features
 
-To get started with the project:
+* **Column Sorting** — click column headers to sort data.
+* **Row Selection** — checkboxes per row, plus "select all on page".
+* **Column Resizing** — drag header borders to resize columns.
+* **Global Search (Quick Filter)** — filter across all visible columns.
+* **Per-Column Filtering** — Text, Numeric (`=`, `!=`, `<`, `<=`, `>`, `>=`, `between`), Date (presets like "Today", "Last 7 days", plus custom ranges), Multi-Select, and Boolean filter types in a popover UI.
+* **Clear All Filters** — one-click button showing the active filter count.
+* **Cell Editing** — double-click or Enter/F2 on editable cells.
+* **Custom Cell Renderers** — supply a `cellRenderer` per column to render anything: formatted currency, badges, action buttons, etc.
+* **Column Pinning** — pin columns left or right; they stay visible during horizontal scroll.
+* **Column Reordering** — drag and drop unpinned column headers.
+* **Column Visibility Toggle** — show/hide columns from a dropdown.
+* **Pagination** — first/prev/next/last controls with selectable page size.
+* **Row Grouping** — drag a column header to the grouping panel to group rows, with expand/collapse.
+* **Group Aggregations** — declare `aggregate: 'sum' | 'avg' | 'min' | 'max' | 'count'` on a column and the group header shows the computed value.
+* **Tree Data** — render hierarchical parent/child data with expand/collapse and indentation.
+* **Copy to Clipboard** — Ctrl/Cmd+C copies the focused cell, or all selected rows (with headers) as tab-separated text ready to paste into a spreadsheet.
+* **Export to CSV & XLSX** — exports the current filtered/sorted view, with CSV formula-injection protection.
+* **Grid State Persistence** — column widths, order, pins, filters, sort, page size, visibility, and grouping are saved to `localStorage` (configurable key per grid instance).
+* **Comprehensive Keyboard Navigation** — arrow keys, Space to select/toggle, Enter/F2 to edit, Escape to cancel, Ctrl/Cmd+C to copy.
+* **Theming** — Light, Dark, and System themes.
 
-1.  Clone the repository (if applicable).
-2.  Install dependencies:
-    ```bash
-    npm install
-    ```
-3.  Run the development server:
-    ```bash
-    npm run dev
-    ```
-    This will typically start the app on `http://localhost:9002`.
+## Getting Started (run the demo)
 
-The main example and usage of the `DataGrid` component can be found in `src/app/page.tsx`.
+```bash
+git clone https://github.com/doktorigi/Fancy-UI-Grid.git
+cd Fancy-UI-Grid
+npm install
+npm run dev
+```
 
-## Features Implemented
+The demo app starts on `http://localhost:9002`. The grid is showcased in the "Repricing Results" view (`src/components/bulk-repricing/ResultsView.tsx`).
 
-The `DataGrid` component currently supports a wide range of features:
+## Using the Grid in Your Own Project
 
-*   **Column Sorting:** Click column headers to sort data.
-*   **Row Selection:** Checkboxes for selecting rows, including a "select all on page" option.
-*   **Column Resizing:** Drag header borders to resize columns.
-*   **Global Search (Quick Filter):** Filter data across all visible columns.
-*   **Per-Column Filtering:**
-    *   Supports Text, Numeric, Date, Multi-Select (for unique string values), and Boolean filter types.
-    *   Popover-based UI for each filter.
-    *   Date filters include predefined ranges (e.g., "Today", "Last 7 days", "This Month") and custom date/range pickers.
-    *   Numeric filters include operators: `=`, `!=`, `<`, `<=`, `>`, `>=`, and `between`.
-*   **Cell Editing:** Double-click or use Enter/F2 on editable cells to modify their content.
-*   **Column Pinning:** Pin columns to the left or right, keeping them visible during horizontal scroll.
-*   **Pagination:**
-    *   Navigation controls (First, Previous, Next, Last).
-    *   Selectable page size.
-    *   Display of current page and total pages.
-*   **Enhanced Footer & Status Bar:**
-    *   Information on total items, selected rows, and items displayed per page.
-    *   Table footer row showing the count of data rows rendered on the current page.
-*   **Tree Data Display:**
-    *   Render hierarchical (parent/child) data.
-    *   Expand/collapse functionality for parent nodes.
-    *   Indentation for visual hierarchy (configurable via `treeColumn` prop).
-*   **Custom Cell Renderers:**
-    *   `isActive` column uses Check/X icons.
-    *   "Name" column example combines Avatar, full name, and email (when `isTreeData` is true and `firstName` is the `treeColumn`).
-*   **Grid State Persistence:** Key grid states (column widths, order, pinned columns, filters, sort config, page size, expanded tree rows, visible columns, grouping) are saved to `localStorage` and restored.
-*   **Comprehensive Keyboard Navigation:**
-    *   Arrow key navigation between cells.
-    *   Spacebar to select/deselect rows or toggle tree nodes.
-    *   Enter/F2 to initiate cell editing.
-    *   Escape to cancel edits.
-*   **Column Visibility Toggle:** Dropdown menu to show/hide columns, with preferences saved to `localStorage`.
-*   **Column Reordering:** Drag and drop unpinned column headers to reorder them.
-*   **Dynamic Column Grouping Panel:**
-    *   Drag column headers to a panel to group data by that column.
-    *   Supports single-level grouping with expand/collapse.
-    *   Remove columns from grouping via the panel.
-    *   (Note: Grouping is disabled if `isTreeData` is true).
-*   **Export to CSV & XLSX:** Buttons to export the current grid view (filtered and sorted) to CSV or XLSX formats.
-*   **Theme Switching (UI):** User interface to switch between Light, Dark, and System themes, with preferences persisted.
+The grid is distributed ShadCN-style: copy the source into your project rather than installing a package.
 
-## Core Component: `DataGrid`
+1. **Copy these files** into your Next.js/React + Tailwind project:
+   * `src/components/data-grid/` (the whole folder)
+   * `src/types/data-grid.ts`
+   * `src/lib/utils.ts` and `src/lib/exportUtils.ts`
+   * The grid-specific styles from `src/app/globals.css` (the `.sticky-header-cell`, `.sticky-body-cell`, `.pinned-*-shadow`, `.cell-focused`, `.group-header-row`, and column-drag rules)
 
-The primary component is `<DataGrid />` located in `src/components/data-grid/DataGrid.tsx`.
+2. **Install the npm dependencies** the grid uses:
 
-See `API_REFERENCE.md` for a detailed overview of props and column definitions.
+   ```bash
+   npm install date-fns xlsx lucide-react clsx tailwind-merge
+   ```
 
-## Further Development
+3. **Add the ShadCN UI components** the grid builds on (skip any you already have):
 
-This project serves as a strong foundation. Potential future enhancements include:
-*   Advanced tree data operations (hierarchical filtering/sorting).
-*   Multi-level column grouping.
-*   Group row aggregations.
-*   Context menu for actions (e.g., export).
-*   Virtualization for very large datasets.
-# MyUIGrid
+   ```bash
+   npx shadcn@latest add table input checkbox button dropdown-menu popover select calendar label skeleton avatar
+   ```
+
+4. **Use it:**
+
+   ```tsx
+   import { DataGrid } from '@/components/data-grid/DataGrid';
+   import type { ColumnDefinition } from '@/types/data-grid';
+
+   interface Person { id: number; name: string; age: number; salary: number; }
+
+   const columns: ColumnDefinition<Person>[] = [
+     { field: 'name', headerText: 'Name', sortable: true, filterable: true, filterType: 'text' },
+     { field: 'age', headerText: 'Age', sortable: true, filterable: true, filterType: 'number', aggregate: 'avg' },
+     {
+       field: 'salary', headerText: 'Salary', sortable: true, aggregate: 'sum',
+       cellRenderer: (value) => <span>${Number(value).toLocaleString()}</span>,
+     },
+   ];
+
+   export default function People({ data }: { data: Person[] }) {
+     return (
+       <DataGrid<Person>
+         data={data}
+         columnDefs={columns}
+         enableRowSelection
+         enableGroupingPanel
+         storageKey="peopleGrid"
+       />
+     );
+   }
+   ```
+
+See [`API_REFERENCE.md`](API_REFERENCE.md) for every prop and column option.
+
+## Keyboard Shortcuts
+
+| Keys | Action |
+| --- | --- |
+| Arrow keys | Move cell focus |
+| Space | Select/deselect row, or toggle tree node / group |
+| Enter / F2 | Edit the focused cell (if editable) |
+| Escape | Cancel editing |
+| Ctrl/Cmd + C | Copy focused cell, or selected rows as TSV |
+
+## Contributing
+
+Issues and pull requests are welcome. Run `npm run typecheck` and `npm run build` before submitting — both must pass.
+
+## License
+
+[MIT](LICENSE) — free for personal and commercial use.

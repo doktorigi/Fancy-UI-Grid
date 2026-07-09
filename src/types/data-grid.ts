@@ -2,6 +2,7 @@
 import type { LucideIcon } from 'lucide-react';
 
 export type FilterType = 'text' | 'number' | 'date' | 'select' | 'boolean';
+export type AggregateFunction = 'sum' | 'avg' | 'min' | 'max' | 'count';
 export type NumberFilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'between';
 export const numberFilterOperators: NumberFilterOperator[] = ['=', '!=', '<', '>', '<=', '>=', 'between'];
 
@@ -30,6 +31,8 @@ export interface ColumnDefinition<TData = any> {
   pinned?: 'left' | 'right' | null; // For column pinning
   groupable?: boolean; // Default true, whether column can be dragged to grouping panel
   headerRenderer?: () => React.ReactNode;
+  cellRenderer?: (value: any, row: TData) => React.ReactNode; // Custom cell content; takes precedence over built-in rendering
+  aggregate?: AggregateFunction; // Shown in group header rows when grouping is active
   defaultWidth?: string | number;
   minWidth?: string | number; // Minimum width for resizing
   resizable?: boolean; // Default true
@@ -80,7 +83,7 @@ export interface ActiveFilters<TData = any> {
 // TData items can optionally have children for tree data
 export interface HierarchicalData<TData = any> {
   id: string | number;
-  children?: HierarchicalData<TData>[];
+  children?: TData[];
   // Other properties of TData
   [key: string]: any;
 }
@@ -111,6 +114,7 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   isTreeData?: boolean;
   treeColumn?: keyof TData & string; // Specifies which column shows tree controls
   enableGroupingPanel?: boolean; // To enable the grouping panel
+  storageKey?: string; // localStorage key for state persistence; set a unique key per grid instance
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {

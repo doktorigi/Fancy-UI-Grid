@@ -17,6 +17,7 @@ The `DataGrid` component is highly configurable through its props.
 | `isTreeData`         | `boolean`                                                            | `false`        | If true, enables tree data rendering mode. Expects `children` property in `TData` items.                                                |
 | `treeColumn`         | `keyof TData & string`                                               | First col field| Specifies which column should display tree expander controls and indentation. Defaults to the `field` of the first column definition. |
 | `enableGroupingPanel`| `boolean`                                                            | `false`        | If true, displays the column grouping panel above the grid.                                                                             |
+| `storageKey`         | `string`                                                             | `'ngxMatDataGridState'` | The `localStorage` key used for state persistence. Set a unique key per grid instance so multiple grids don't overwrite each other's saved state. |
 
 ### `TData` Type Constraint
 
@@ -47,6 +48,8 @@ Each object in the `columnDefs` prop array defines a column in the grid.
 | `pinned`            | `'left' \| 'right' \| null`               | `null`      | Pins the column to the specified side. Pinned columns remain visible during horizontal scrolling.                                         |
 | `groupable`         | `boolean`                                 | `true`      | If true (default), this column can be dragged to the grouping panel (if `enableGroupingPanel` is true on `DataGrid`).                        |
 | `headerRenderer`    | `() => React.ReactNode`                   | `undefined` | A function that returns a React node to render custom content in the column header, instead of just `headerText`.                             |
+| `cellRenderer`      | `(value: any, row: TData) => React.ReactNode` | `undefined` | Renders custom cell content (formatted values, badges, action buttons, ...). Takes precedence over built-in cell rendering; not applied to the tree expander column or while a cell is being edited. |
+| `aggregate`         | `'sum' \| 'avg' \| 'min' \| 'max' \| 'count'` | `undefined` | When rows are grouped, the group header row shows this aggregate computed over the group's rows for this column.                          |
 | `defaultWidth`      | `string \| number`                        | `150px`     | The default width of the column (e.g., `'200px'` or `200`).                                                                                   |
 | `minWidth`          | `string \| number`                        | `50px`      | The minimum width the column can be resized to (e.g., `'100px'` or `100`).                                                                   |
 | `resizable`         | `boolean`                                 | `true`      | If true (default), the column's width can be changed by dragging its header border.                                                            |
@@ -76,9 +79,15 @@ Each object in the `columnDefs` prop array defines a column in the grid.
 ### `boolean`
 *   Dropdown select with "Any", "Yes", "No" options.
 
+## Clipboard
+
+With the grid focused, **Ctrl/Cmd+C** copies:
+*   All selected rows (if any) as tab-separated text with a header row — paste-ready for Excel/Sheets.
+*   Otherwise, the value of the focused cell.
+
 ## State Persistence
 
-The grid automatically persists the following states to `localStorage` under the key `ngxMatDataGridState`:
+The grid automatically persists the following states to `localStorage` under the key given by the `storageKey` prop (default `ngxMatDataGridState`):
 *   Column widths
 *   Column order (for unpinned columns)
 *   Pinned columns (left and right)
