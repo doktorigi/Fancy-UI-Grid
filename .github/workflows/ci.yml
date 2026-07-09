@@ -29,7 +29,13 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: streamlit-component/frontend/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            streamlit-component/frontend/package-lock.json
+      # Root install too: the shared grid source under src/ resolves its
+      # deps (lucide-react, date-fns, ...) from the repo root node_modules.
+      - run: npm ci
+        working-directory: .
       - run: npm ci
         working-directory: streamlit-component/frontend
       - run: npm run build
