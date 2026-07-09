@@ -111,6 +111,7 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   pageSizeOptions?: number[];
   enableRowSelection?: boolean;
   onCellEdit?: (rowId: string | number, field: keyof TData & string, value: any) => void;
+  onSelectionChange?: (selectedIds: (string | number)[]) => void;
   isTreeData?: boolean;
   treeColumn?: keyof TData & string; // Specifies which column shows tree controls
   enableGroupingPanel?: boolean; // To enable the grouping panel

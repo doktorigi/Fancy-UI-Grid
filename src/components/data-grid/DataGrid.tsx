@@ -51,6 +51,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   pageSizeOptions = [10, 25, 50, 100],
   enableRowSelection = true,
   onCellEdit,
+  onSelectionChange,
   isTreeData = false,
   treeColumn: specifiedTreeColumn,
   enableGroupingPanel = false,
@@ -332,6 +333,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       } else {
         newSelectedRows.delete(rowId);
       }
+      onSelectionChange?.(Array.from(newSelectedRows));
       return { ...prevState, selectedRows: newSelectedRows };
     });
   };
@@ -344,6 +346,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           if (!row.isGroupHeader) newSelectedRows.add(row.id)
         });
       }
+      onSelectionChange?.(Array.from(newSelectedRows));
       return { ...prevState, selectedRows: newSelectedRows };
     });
   };

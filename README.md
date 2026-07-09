@@ -90,6 +90,21 @@ The grid is distributed ShadCN-style: copy the source into your project rather t
 
 See [`API_REFERENCE.md`](API_REFERENCE.md) for every prop and column option.
 
+## Using the Grid in Streamlit
+
+The grid is also available as a Streamlit custom component — selection and cell edits flow back to Python:
+
+```bash
+pip install "git+https://github.com/doktorigi/Fancy-UI-Grid.git#subdirectory=streamlit-component"
+```
+
+```python
+from fancy_ui_grid import fancy_ui_grid
+result = fancy_ui_grid(data, column_defs, key="grid")  # data: list of dicts or DataFrame
+```
+
+See [`streamlit-component/README.md`](streamlit-component/README.md) for details.
+
 ## Keyboard Shortcuts
 
 | Keys | Action |
