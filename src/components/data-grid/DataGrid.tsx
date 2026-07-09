@@ -28,8 +28,7 @@ import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { DataGridGroupingPanel } from './DataGridGroupingPanel';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ChevronRight, ChevronDown, FileDown, FilterX, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileDown, FilterX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportToCsv, exportToXlsx } from '@/lib/exportUtils';
 import {
@@ -38,7 +37,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, isValid } from 'date-fns';
+import { startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, isValid } from 'date-fns';
 
 
 const DEFAULT_COL_WIDTH = 150; // px
@@ -56,8 +55,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   treeColumn: specifiedTreeColumn,
   enableGroupingPanel = false,
   storageKey = LOCAL_STORAGE_KEY,
+  virtualized = false,
+  rowHeight = 44,
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = React.useState(0);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (virtualized) {
+      setScrollTop(e.currentTarget.scrollTop);
+    }
+  };
 
   const [state, setState] = React.useState<DataGridState<TData>>(() => {
     const defaultWidths = {} as Record<keyof TData & string, string | number>;
@@ -475,7 +484,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   const handleGroupColumn = (field: keyof TData & string) => {
     setState(prevState => {
-      const newGroupedBy = [field]; 
+      if (prevState.groupedBy.includes(field)) return prevState;
+      const newGroupedBy = [...prevState.groupedBy, field]; 
       return { ...prevState, groupedBy: newGroupedBy, currentPage: 1, expandedGroups: new Set() };
     });
   };
@@ -670,44 +680,42 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const dataToSort = [...filteredData];
     const { groupedBy, sortConfig } = state;
 
-    if (groupedBy.length > 0 && !isTreeData) { // Group sorting only if not tree data
-      const groupField = groupedBy[0]; 
-      const groupColDef = colDefsMap.get(groupField);
-      dataToSort.sort((a, b) => {
-        const valA = getCellValue(a, groupField);
-        const valB = getCellValue(b, groupField);
-        if (valA === null || valA === undefined) return 1;
-        if (valB === null || valB === undefined) return -1;
-        if (typeof valA === 'number' && typeof valB === 'number') return valA - valB;
-        if (groupColDef?.filterType === 'date') {
-          const dateA = new Date(String(valA)).getTime();
-          const dateB = new Date(String(valB)).getTime();
-          if (!isNaN(dateA) && !isNaN(dateB)) return dateA - dateB;
-        }
-        return String(valA).localeCompare(String(valB));
-      });
-    }
-    
-    if (!sortConfig) return dataToSort;
-    const { field, direction } = sortConfig;
-    const colDef = colDefsMap.get(field);
-    if (!colDef) return dataToSort;
-
-    return dataToSort.sort((a, b) => {
+    dataToSort.sort((a, b) => {
+      // 1. Group sorting takes precedence
       if (groupedBy.length > 0 && !isTreeData) {
-        const groupField = groupedBy[0];
-        const groupValA = getCellValue(a, groupField);
-        const groupValB = getCellValue(b, groupField);
-        if (groupValA !== groupValB) {
-          // This part should already be handled by the primary group sort above.
-          // If not, it implies the primary group sort needs to be more robust or
-          // this secondary sort needs to ensure it respects the primary grouping.
-          // For now, we assume the primary sort handles the groups.
+        for (let i = 0; i < groupedBy.length; i++) {
+          const groupField = groupedBy[i];
+          const groupColDef = colDefsMap.get(groupField);
+          const valA = getCellValue(a, groupField);
+          const valB = getCellValue(b, groupField);
+
+          if (valA !== valB) {
+            if (valA === null || valA === undefined) return 1;
+            if (valB === null || valB === undefined) return -1;
+
+            if (typeof valA === 'number' && typeof valB === 'number') {
+              return valA - valB;
+            }
+            if (groupColDef?.filterType === 'date') {
+              const dateA = new Date(String(valA)).getTime();
+              const dateB = new Date(String(valB)).getTime();
+              if (!isNaN(dateA) && !isNaN(dateB)) return dateA - dateB;
+            }
+            return String(valA).localeCompare(String(valB));
+          }
         }
       }
 
+      // 2. Sorting configuration if they are in the same group
+      if (!sortConfig) return 0;
+      const { field, direction } = sortConfig;
+      const colDef = colDefsMap.get(field);
+      if (!colDef) return 0;
+
       const valA = getCellValue(a, field);
       const valB = getCellValue(b, field);
+
+      if (valA === valB) return 0;
       if (valA === null || valA === undefined) return direction === 'asc' ? 1 : -1;
       if (valB === null || valB === undefined) return direction === 'asc' ? -1 : 1;
 
@@ -726,73 +734,108 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       }
       return direction === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
     });
+
+    return dataToSort;
   }, [filteredData, state.sortConfig, state.groupedBy, colDefsMap, isTreeData]);
 
   const dataWithGroupHeaders = React.useMemo(() => {
     if (state.groupedBy.length === 0 || isTreeData) { 
       return sortedData;
     }
-    const groupField = state.groupedBy[0];
-    const groupedResult: ProcessedRow<TData>[] = [];
-    let currentGroupValue: any = undefined;
-    let currentGroupItems: ProcessedRow<TData>[] = [];
 
-    sortedData.forEach((row, index) => {
-      const rowGroupValue = getCellValue(row, groupField);
-      if (index === 0 || rowGroupValue !== currentGroupValue) {
-        if (currentGroupItems.length > 0 && currentGroupValue !== undefined) {
-          const groupKey = `${String(groupField)}:${String(currentGroupValue)}`;
-           groupedResult.push({
-            id: `group-header-${groupKey}`,
-            originalRow: {} as TData, 
-            level: 0, 
-            hasChildren: true, 
-            isGroupHeader: true,
-            groupField: groupField,
-            groupValue: currentGroupValue,
-            groupKey: groupKey,
-            groupItems: currentGroupItems,
-            isExpanded: state.expandedGroups.has(groupKey),
-          } as ProcessedRow<TData>);
-          if (state.expandedGroups.has(groupKey)) {
-             groupedResult.push(...currentGroupItems);
-          }
-          currentGroupItems = [];
+    const buildGroupedRows = (
+      rows: ProcessedRow<TData>[],
+      groupIndex: number,
+      parentGroupKey: string,
+      currentLevel: number
+    ): ProcessedRow<TData>[] => {
+      if (groupIndex >= state.groupedBy.length) {
+        return rows;
+      }
+
+      const groupField = state.groupedBy[groupIndex];
+      const result: ProcessedRow<TData>[] = [];
+
+      let currentVal: any = undefined;
+      let currentItems: ProcessedRow<TData>[] = [];
+
+      const addGroup = (val: any, items: ProcessedRow<TData>[]) => {
+        const groupValueStr = String(val);
+        const groupKey = parentGroupKey ? `${parentGroupKey}|${String(groupField)}:${groupValueStr}` : `${String(groupField)}:${groupValueStr}`;
+        
+        const subGroupedItems = buildGroupedRows(items, groupIndex + 1, groupKey, currentLevel + 1);
+
+        const groupHeaderRow: ProcessedRow<TData> = {
+          id: `group-header-${groupKey}`,
+          originalRow: {} as TData,
+          level: currentLevel,
+          hasChildren: true,
+          isGroupHeader: true,
+          groupField: groupField,
+          groupValue: val,
+          groupKey: groupKey,
+          groupItems: items, 
+          isExpanded: state.expandedGroups.has(groupKey),
+        } as ProcessedRow<TData>;
+
+        result.push(groupHeaderRow);
+
+        if (state.expandedGroups.has(groupKey)) {
+          result.push(...subGroupedItems);
         }
-        currentGroupValue = rowGroupValue;
-      }
-      currentGroupItems.push(row);
-    });
+      };
 
-    if (currentGroupItems.length > 0 && currentGroupValue !== undefined) {
-      const groupKey = `${String(groupField)}:${String(currentGroupValue)}`;
-      groupedResult.push({
-        id: `group-header-${groupKey}`,
-        originalRow: {} as TData,
-        level: 0,
-        hasChildren: true,
-        isGroupHeader: true,
-        groupField: groupField,
-        groupValue: currentGroupValue,
-        groupKey: groupKey,
-        groupItems: currentGroupItems,
-        isExpanded: state.expandedGroups.has(groupKey),
-      } as ProcessedRow<TData>);
-       if (state.expandedGroups.has(groupKey)) {
-        groupedResult.push(...currentGroupItems);
+      rows.forEach((row, index) => {
+        const rowVal = getCellValue(row, groupField);
+        if (index === 0 || rowVal !== currentVal) {
+          if (currentItems.length > 0) {
+            addGroup(currentVal, currentItems);
+          }
+          currentVal = rowVal;
+          currentItems = [row];
+        } else {
+          currentItems.push(row);
+        }
+      });
+
+      if (currentItems.length > 0) {
+        addGroup(currentVal, currentItems);
       }
-    }
-    return groupedResult;
+
+      return result;
+    };
+
+    return buildGroupedRows(sortedData, 0, "", 0);
   }, [sortedData, state.groupedBy, state.expandedGroups, isTreeData, getCellValue]);
 
 
+  const dataToPaginate = React.useMemo(() => {
+    return state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData;
+  }, [dataWithGroupHeaders, sortedData, state.groupedBy, isTreeData]);
+
   const paginatedData = React.useMemo(() => {
-    const dataToPaginate = state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData;
+    if (virtualized) {
+      return dataToPaginate;
+    }
     const startIndex = (state.currentPage - 1) * state.pageSize;
     return dataToPaginate.slice(startIndex, startIndex + state.pageSize);
-  }, [sortedData, dataWithGroupHeaders, state.currentPage, state.pageSize, state.groupedBy, isTreeData]);
+  }, [dataToPaginate, state.currentPage, state.pageSize, virtualized]);
 
-  const totalPages = Math.ceil((state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData).length / state.pageSize);
+  const totalPages = Math.ceil(dataToPaginate.length / state.pageSize);
+
+  const { startIndex, endIndex, visibleRows } = React.useMemo(() => {
+    if (!virtualized) {
+      return { startIndex: 0, endIndex: paginatedData.length, visibleRows: paginatedData };
+    }
+    const buffer = 5;
+    const sIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
+    const eIdx = Math.min(paginatedData.length, Math.ceil((scrollTop + (scrollContainerRef.current?.clientHeight || 500)) / rowHeight) + buffer);
+    return {
+      startIndex: sIdx,
+      endIndex: eIdx,
+      visibleRows: paginatedData.slice(sIdx, eIdx)
+    };
+  }, [virtualized, paginatedData, scrollTop, rowHeight]);
 
 
   const orderedVisibleColumnDefs = React.useMemo(() => {
@@ -1025,29 +1068,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       );
     }
 
-    if (col.cellRenderer && !(isTreeData && treeColumn && col.field === treeColumn)) {
-      return col.cellRenderer(cellValue, row.originalRow);
-    }
-
     if (isTreeData && treeColumn && col.field === treeColumn) {
-      const nameContent = (
-        <div className="flex items-center gap-2">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback>
-              {String(getCellValue(row, 'firstName'))?.charAt(0)?.toUpperCase()}
-              {String(getCellValue(row, 'lastName'))?.charAt(0)?.toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <div>
-            <div className="font-medium">
-              {getCellValue(row, 'firstName')} {getCellValue(row, 'lastName')}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {getCellValue(row, 'email')}
-            </div>
-          </div>
-        </div>
-      );
+      const treeContent = col.cellRenderer 
+        ? col.cellRenderer(cellValue, row.originalRow)
+        : String(cellValue);
 
       return (
         <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
@@ -1061,48 +1085,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
           ) : (
-            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span> // Adjusted from 1.5rem to 1.25rem to match button size if needed
+            <span style={{ width: '1.25rem' }} className="mr-1 inline-block"></span>
           )}
-          {nameContent}
+          {treeContent}
         </div>
       );
     }
 
-    if (col.field === 'isActive') {
-      return cellValue ? (
-        <Check className="h-5 w-5 text-green-500" />
-      ) : (
-        <X className="h-5 w-5 text-red-500" />
-      );
-    }
-    
-    if (col.field === 'age') {
-      return <span className="text-right w-full block">{String(cellValue)}</span>;
-    }
-
-    if (col.field === 'registrationDate') {
-      try {
-        const dateVal = new Date(String(cellValue));
-        if (isValid(dateVal)) {
-            return format(dateVal, "MM/dd/yyyy");
-        }
-        return String(cellValue);
-      } catch (e) {
-        return String(cellValue);
-      }
-    }
-    if (col.field === 'progress') {
-      return (
-        <div className="flex items-center">
-          <div className="w-full bg-muted rounded-full h-2.5 mr-2">
-            <div className="bg-primary h-2.5 rounded-full" style={{ width: `${cellValue}%` }}></div>
-          </div>
-          <span className="text-sm">{cellValue}%</span>
-        </div>
-      );
+    if (col.cellRenderer) {
+      return col.cellRenderer(cellValue, row.originalRow);
     }
       
-    return String(cellValue);
+    return cellValue !== null && cellValue !== undefined ? String(cellValue) : '';
   };
 
   const checkboxColumnWidth = '50px';
@@ -1197,13 +1191,20 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           </DropdownMenu>
         </div>
       </div>
-      <div className="overflow-x-auto relative">
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className={cn(
+          "overflow-x-auto relative",
+          virtualized && "overflow-y-auto max-h-[500px]"
+        )}
+      >
         <Table>
           <TableHeader>
             <TableRow>
               {enableRowSelection && (
                 <TableHead
-                  className="px-0 py-0 sticky-header-cell"
+                  className="px-0 py-0 sticky-header-cell top-0"
                   style={{
                     width: checkboxColumnWidth,
                     minWidth: checkboxColumnWidth,
@@ -1239,13 +1240,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 return (
                   <TableHead
                     key={colDef.field}
+                    data-field={colDef.field}
                     style={{
                       width: currentWidth,
                       minWidth: colDef.minWidth || currentWidth || '50px',
                       ...stickyStyle
                     }}
                     className={cn(
-                      "px-0 py-0 relative",
+                      "px-0 py-0 sticky top-0 bg-card z-20",
                       (isLeftPinned || isRightPinned) && "sticky-header-cell",
                       isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
                       isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
@@ -1280,8 +1282,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {paginatedData.length > 0 ? (
-              paginatedData.map((row) => {
+            {virtualized && startIndex > 0 && (
+              <TableRow style={{ height: `${startIndex * rowHeight}px` }} className="hover:bg-transparent">
+                <TableCell 
+                  colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
+                  className="p-0 border-0" 
+                  style={{ height: `${startIndex * rowHeight}px` }}
+                />
+              </TableRow>
+            )}
+            {visibleRows.length > 0 ? (
+              visibleRows.map((row) => {
                 if (row.isGroupHeader) {
                   const groupColDef = colDefsMap.get(row.groupField as keyof TData & string);
                   const groupHeaderText = groupColDef ? groupColDef.headerText : String(row.groupField);
@@ -1292,7 +1303,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         className="px-3 py-2 cursor-pointer"
                         onClick={() => row.groupKey && handleToggleExpandGroup(row.groupKey)}
                       >
-                        <div className="flex items-center">
+                        <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
                            <button
                               className="mr-1 p-0.5 rounded hover:bg-accent focus:outline-none"
                               aria-label={row.isExpanded ? `Collapse group ${row.groupValue}` : `Expand group ${row.groupValue}`}
@@ -1352,6 +1363,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       <TableCell
                         key={colDef.field}
                         id={`cell-${row.id}-${colDef.field}`}
+                        data-field={colDef.field}
                         className={cn(
                           "px-3 py-2 truncate",
                           colDef.editable && "cursor-pointer",
@@ -1383,9 +1395,72 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 </TableCell>
               </TableRow>
             )}
+            {virtualized && endIndex < paginatedData.length && (
+              <TableRow style={{ height: `${(paginatedData.length - endIndex) * rowHeight}px` }} className="hover:bg-transparent">
+                <TableCell 
+                  colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
+                  className="p-0 border-0" 
+                  style={{ height: `${(paginatedData.length - endIndex) * rowHeight}px` }}
+                />
+              </TableRow>
+            )}
           </TableBody>
           {renderedRowsCount > 0 && (
             <TableFooter>
+              {orderedVisibleColumnDefs.some(col => col.aggregate) && (
+                <TableRow className="bg-muted/30 font-semibold border-t">
+                  {enableRowSelection && (
+                    <TableCell
+                      className="px-3 py-2 sticky-body-cell"
+                      style={{
+                        left: 0,
+                        zIndex: 11
+                      }}
+                    >
+                      Total
+                    </TableCell>
+                  )}
+                  {orderedVisibleColumnDefs.map((colDef) => {
+                    const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
+                    const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
+                    let stickyStyle: React.CSSProperties = {};
+                    if (isLeftPinned) {
+                      stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
+                    } else if (isRightPinned) {
+                      stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
+                    }
+
+                    const hasAggregate = !!colDef.aggregate;
+                    const aggVal = hasAggregate ? computeAggregate(sortedData, colDef) : '';
+
+                    return (
+                      <TableCell
+                        key={colDef.field}
+                        className={cn(
+                          "px-3 py-2 truncate",
+                          (isLeftPinned || isRightPinned) && "sticky-body-cell",
+                          isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
+                          isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow"
+                        )}
+                        style={{
+                          width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                          maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                          ...stickyStyle
+                        }}
+                      >
+                        {hasAggregate && aggVal ? (
+                          <span>
+                            <span className="text-xs text-muted-foreground mr-1">
+                              {aggregateLabels[colDef.aggregate!]}
+                            </span>
+                            {aggVal}
+                          </span>
+                        ) : ''}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              )}
               <TableRow>
                 <TableCell 
                   colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
@@ -1398,16 +1473,26 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           )}
         </Table>
       </div>
-      <DataGridPagination
-        currentPage={state.currentPage}
-        totalPages={totalPages}
-        pageSize={state.pageSize}
-        totalItems={(state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData).length}
-        selectedRowsCount={state.selectedRows.size}
-        onPageChange={handlePageChange}
-        onPageSizeChange={handlePageSizeChange}
-        pageSizeOptions={pageSizeOptions}
-      />
+      {virtualized ? (
+        <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t gap-4">
+          <div className="text-sm text-muted-foreground">
+            {state.selectedRows.size > 0
+              ? `${state.selectedRows.size} of ${sortedData.length} row(s) selected.`
+              : sortedData.length > 0 ? `Showing all ${sortedData.length} items (virtualized).` : 'No items to display.'}
+          </div>
+        </div>
+      ) : (
+        <DataGridPagination
+          currentPage={state.currentPage}
+          totalPages={totalPages}
+          pageSize={state.pageSize}
+          totalItems={(state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData).length}
+          selectedRowsCount={state.selectedRows.size}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          pageSizeOptions={pageSizeOptions}
+        />
+      )}
     </div>
   );
 }

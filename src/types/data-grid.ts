@@ -116,6 +116,8 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   treeColumn?: keyof TData & string; // Specifies which column shows tree controls
   enableGroupingPanel?: boolean; // To enable the grouping panel
   storageKey?: string; // localStorage key for state persistence; set a unique key per grid instance
+  virtualized?: boolean;
+  rowHeight?: number;
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {

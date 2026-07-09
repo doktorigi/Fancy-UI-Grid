@@ -86,6 +86,32 @@ export function DataGridHeaderCell<TData>({
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
+
+  const handleDoubleClickOnResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const thElement = (event.target as HTMLElement).closest('th');
+    if (!thElement) return;
+
+    const tableElement = thElement.closest('table');
+    if (!tableElement) return;
+
+    const cells = Array.from(tableElement.querySelectorAll(`td[data-field="${column.field}"]`));
+    
+    let maxWidth = thElement.scrollWidth;
+
+    cells.forEach((cell) => {
+      const htmlCell = cell as HTMLElement;
+      maxWidth = Math.max(maxWidth, htmlCell.scrollWidth);
+    });
+
+    const padding = 8;
+    const finalWidth = maxWidth + padding;
+
+    const minW = parseFloat(String(column.minWidth || 50));
+    onColumnWidthChange(column.field, Math.max(minW, finalWidth));
+  };
   
   const isResizable = column.resizable !== false;
   // A column can be dragged for reordering OR grouping (or both, if enabled)
@@ -203,6 +229,7 @@ export function DataGridHeaderCell<TData>({
         <div
           className="resize-handle"
           onMouseDown={handleMouseDownOnResize}
+          onDoubleClick={handleDoubleClickOnResize}
           onClick={(e) => e.stopPropagation()} 
           aria-hidden="true"
         />
