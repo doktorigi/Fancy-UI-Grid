@@ -1,5 +1,8 @@
 # Fancy UI Grid
 
+[![CI](https://github.com/doktorigi/Fancy-UI-Grid/actions/workflows/ci.yml/badge.svg)](https://github.com/doktorigi/Fancy-UI-Grid/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A feature-rich, open-source React data grid built with Next.js, ShadCN UI components, and Tailwind CSS. Designed to be highly customizable and performant, inspired by enterprise-grade data grids — free under the MIT license.
 
 ## Features
@@ -117,7 +120,7 @@ See [`streamlit-component/README.md`](streamlit-component/README.md) for details
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `npm run typecheck` and `npm run build` before submitting — both must pass.
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [`good first issue` label](https://github.com/doktorigi/Fancy-UI-Grid/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
 ## License
 

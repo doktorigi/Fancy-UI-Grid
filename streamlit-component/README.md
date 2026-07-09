@@ -46,6 +46,14 @@ Run the demo: `streamlit run example_app.py` (and `python smoke_test.py` for the
 * If the grid's filter popovers get clipped at the bottom of the component frame, pass a fixed `height=` (px).
 * Set a unique `storage_key` per grid so persisted state (column widths, filters, ...) doesn't collide.
 
+## Publishing to PyPI
+
+```bash
+pip install build twine
+python -m build            # from streamlit-component/, after a fresh frontend build
+twine upload dist/*
+```
+
 ## Developing the frontend
 
 ```bash
