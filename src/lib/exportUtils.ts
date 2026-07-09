@@ -1,6 +1,8 @@
 import * as XLSX from 'xlsx';
 import type { ColumnDefinition, HierarchicalData, ProcessedRow } from '@/types/data-grid';
-import { getCellValue } from './utils'; // Assuming getCellValue is moved here or imported
+import { getCellValue } from './utils';
+
+const FORMULA_INJECTION_PREFIX_PATTERN = /^[=+\-@\t\r|]/;
 
 function downloadBrowserFile(content: string | ArrayBuffer, fileName: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
@@ -13,20 +15,30 @@ function downloadBrowserFile(content: string | ArrayBuffer, fileName: string, mi
   URL.revokeObjectURL(link.href);
 }
 
-function escapeCsvCell(cellValue: any): string {
+export function neutralizeSpreadsheetFormula(value: string): string {
+  return FORMULA_INJECTION_PREFIX_PATTERN.test(value) ? `\t${value}` : value;
+}
+
+export function escapeCsvCell(cellValue: any): string {
   if (cellValue === null || typeof cellValue === 'undefined') {
     return '';
   }
-  const stringValue = String(cellValue);
-  // Prefix formula-injection characters so spreadsheet apps don't execute them
-  if (/^[=+\-@\t\r|]/.test(stringValue)) {
-    return `"\t${stringValue.replace(/"/g, '""')}"`;
-  }
-  // Wrap in quotes if value contains a comma, double quote, or newline
-  if (/[",\r\n]/.test(stringValue)) {
+  const rawStringValue = String(cellValue);
+  const stringValue = neutralizeSpreadsheetFormula(rawStringValue);
+  const wasNeutralized = stringValue !== rawStringValue;
+  // Wrap in quotes if value contains a comma, double quote, newline, or neutralized formula prefix.
+  if (wasNeutralized || /[",\r\n]/.test(stringValue)) {
     return `"${stringValue.replace(/"/g, '""')}"`;
   }
   return stringValue;
+}
+
+export function prepareXlsxCellValue(value: any): string | number | boolean | Date {
+  // XLSX can preserve these native types directly.
+  if (value instanceof Date) return value;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value;
+  return neutralizeSpreadsheetFormula(String(value ?? ''));
 }
 
 export function exportToCsv<TData extends HierarchicalData<TData>>(
@@ -55,11 +67,7 @@ export function exportToXlsx<TData extends HierarchicalData<TData>>(
   const data = rowsToExport.map(row =>
     visibleColumns.map(col => {
       const value = getCellValue(row, col.field);
-      // XLSX library can handle dates, numbers, booleans directly
-      if (value instanceof Date) return value;
-      if (typeof value === 'boolean') return value;
-      if (typeof value === 'number') return value;
-      return String(value ?? ''); // Ensure null/undefined become empty strings
+      return prepareXlsxCellValue(value);
     })
   );
 
