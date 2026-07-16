@@ -8,9 +8,6 @@ import type {
   FilterValue,
   HierarchicalData,
   ProcessedRow,
-  DateFilterValue,
-  DateTreeFilterValue,
-  NumberFilterValue,
 } from '@/types/data-grid';
 import {
   Table,
@@ -32,24 +29,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronRight, ChevronDown, FileDown, FilterX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportToCsv, exportToXlsx } from '@/lib/exportUtils';
+import { computeAggregate, dateTreeKeyOf, filterRows, sortRows } from '@/lib/gridProcessing';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, isValid } from 'date-fns';
-
-
 const DEFAULT_COL_WIDTH = 150; // px
 const LOCAL_STORAGE_KEY = 'ngxMatDataGridState';
-
-// Extracts { year, month } straight from a 'YYYY-MM-...' string without going through
-// Date parsing, so local-timezone shifting can never move a value into the wrong bucket.
-function dateTreeKeyOf(value: any): { year: string; month: string } | null {
-  const match = String(value ?? '').match(/^(\d{4})-(\d{2})/);
-  return match ? { year: match[1], month: match[2] } : null;
-}
 
 export function DataGrid<TData extends HierarchicalData<TData>>({
   data: initialData,
@@ -614,201 +602,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   };
 
   const filteredData = React.useMemo(() => {
-    if (!baseDataForProcessing) return [];
-    let dataToFilter = [...baseDataForProcessing];
-
-    if (state.globalFilter) {
-      const lowerGlobalFilter = state.globalFilter.toLowerCase();
-      dataToFilter = dataToFilter.filter((row) =>
-        processedColumnDefs.some((col) => {
-          if (globalFilterFields && globalFilterFields.length > 0 && !globalFilterFields.includes(col.field)) {
-            return false;
-          }
-          if (state.visibleColumns.includes(col.field)) {
-            const cellValue = getCellValue(row, col.field);
-            return String(cellValue).toLowerCase().includes(lowerGlobalFilter);
-          }
-          return false;
-        })
-      );
-    }
-
-    Object.entries(state.columnFilters).forEach(([field, filter]) => {
-      if (!filter) return;
-      const colDef = processedColumnDefs.find(c => c.field === (field as keyof TData & string));
-      if (!colDef || !state.visibleColumns.includes(colDef.field)) return;
-
-      dataToFilter = dataToFilter.filter((row) => {
-        const cellValue = getCellValue(row, field as keyof TData & string);
-        if (cellValue === undefined || cellValue === null) {
-            if (filter.type === 'boolean' && filter.value === undefined) return true; // 'Any' for boolean
-            if (filter.type === 'date' && (filter as DateFilterValue).preset === 'all') return true; // 'Any Date' for date
-            if (filter.type === 'date-tree' && !(filter as DateTreeFilterValue).selected?.length) return true; // no tree selection => show all
-            return false;
-        }
-        switch (filter.type) {
-          case 'text':
-            return String(cellValue).toLowerCase().includes(String(filter.value).toLowerCase());
-          case 'number':
-            const numFilter = filter as NumberFilterValue;
-            if (numFilter.value === undefined && (numFilter.operator !== 'between' || numFilter.value2 === undefined)) return true;
-            const numCell = parseFloat(String(cellValue));
-            if (isNaN(numCell)) return false;
-
-            if (numFilter.operator === 'between') {
-              if (typeof numFilter.value === 'number' && typeof numFilter.value2 === 'number') {
-                return numCell >= numFilter.value && numCell <= numFilter.value2;
-              } else if (typeof numFilter.value === 'number') {
-                return numCell >= numFilter.value;
-              } else if (typeof numFilter.value2 === 'number') {
-                return numCell <= numFilter.value2;
-              }
-              return true; // If one is undefined, it's an open range
-            }
-            if (numFilter.value === undefined) return true; // For other ops, if value is undefined, no filter
-
-            switch (numFilter.operator) {
-              case '=': return numCell === numFilter.value;
-              case '!=': return numCell !== numFilter.value;
-              case '<': return numCell < numFilter.value;
-              case '>': return numCell > numFilter.value;
-              case '<=': return numCell <= numFilter.value;
-              case '>=': return numCell >= numFilter.value;
-              default: return true;
-            }
-          case 'date':
-            const dateFilter = filter as DateFilterValue;
-            const cellDate = new Date(String(cellValue));
-            if (!isValid(cellDate)) return false;
-            const cellDateTime = startOfDay(cellDate).getTime();
-
-            if (dateFilter.preset === 'all' || !dateFilter.preset) return true;
-
-            if (dateFilter.preset === 'custom') {
-              if (!dateFilter.value && !dateFilter.value2) return true; // No custom range set
-              const startDate = dateFilter.value ? startOfDay(dateFilter.value).getTime() : -Infinity;
-              const endDate = dateFilter.value2 ? endOfDay(dateFilter.value2).getTime() : Infinity;
-              return cellDateTime >= startDate && cellDateTime <= endDate;
-            } else {
-              let lowerBound: Date | null = null;
-              let upperBound: Date | null = null;
-              const today = new Date();
-
-              switch (dateFilter.preset) {
-                case 'today':
-                  lowerBound = startOfDay(today);
-                  upperBound = endOfDay(today);
-                  break;
-                case 'yesterday':
-                  lowerBound = startOfDay(subDays(today, 1));
-                  upperBound = endOfDay(subDays(today, 1));
-                  break;
-                case 'last7days':
-                  lowerBound = startOfDay(subDays(today, 6)); // Includes today
-                  upperBound = endOfDay(today);
-                  break;
-                case 'last30days':
-                  lowerBound = startOfDay(subDays(today, 29)); // Includes today
-                  upperBound = endOfDay(today);
-                  break;
-                case 'thisMonth':
-                  lowerBound = startOfMonth(today);
-                  upperBound = endOfMonth(today);
-                  break;
-                case 'lastMonth':
-                  const lastMonthStart = startOfMonth(subMonths(today, 1));
-                  lowerBound = lastMonthStart;
-                  upperBound = endOfMonth(lastMonthStart);
-                  break;
-              }
-              if (lowerBound && upperBound) {
-                return cellDateTime >= lowerBound.getTime() && cellDateTime <= upperBound.getTime();
-              }
-              return true;
-            }
-          case 'date-tree': {
-            const treeFilter = filter as DateTreeFilterValue;
-            if (!treeFilter.selected || treeFilter.selected.length === 0) return true;
-            const parts = dateTreeKeyOf(cellValue);
-            if (!parts) return false;
-            return treeFilter.selected.includes(`${parts.year}-${parts.month}`);
-          }
-          case 'select':
-            if (Array.isArray(filter.value)) {
-              return filter.value.length === 0 || filter.value.includes(String(cellValue));
-            }
-            return String(cellValue) === filter.value;
-          case 'boolean':
-            if (filter.value === undefined) return true;
-            return Boolean(cellValue) === filter.value;
-          default:
-            return true;
-        }
-      });
+    return filterRows({
+      rows: baseDataForProcessing,
+      columns: processedColumnDefs,
+      visibleColumns: state.visibleColumns,
+      globalFilter: state.globalFilter,
+      globalFilterFields,
+      columnFilters: state.columnFilters,
     });
-    return dataToFilter;
   }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, globalFilterFields]);
 
   const sortedData = React.useMemo(() => {
-    const dataToSort = [...filteredData];
-    const { groupedBy, sortConfig } = state;
-
-    dataToSort.sort((a, b) => {
-      // 1. Group sorting takes precedence
-      if (groupedBy.length > 0 && !isTreeData) {
-        for (let i = 0; i < groupedBy.length; i++) {
-          const groupField = groupedBy[i];
-          const groupColDef = colDefsMap.get(groupField);
-          const valA = getCellValue(a, groupField);
-          const valB = getCellValue(b, groupField);
-
-          if (valA !== valB) {
-            if (valA === null || valA === undefined) return 1;
-            if (valB === null || valB === undefined) return -1;
-
-            if (typeof valA === 'number' && typeof valB === 'number') {
-              return valA - valB;
-            }
-            if (groupColDef?.filterType === 'date') {
-              const dateA = new Date(String(valA)).getTime();
-              const dateB = new Date(String(valB)).getTime();
-              if (!isNaN(dateA) && !isNaN(dateB)) return dateA - dateB;
-            }
-            return String(valA).localeCompare(String(valB));
-          }
-        }
-      }
-
-      // 2. Sorting configuration if they are in the same group
-      if (!sortConfig) return 0;
-      const { field, direction } = sortConfig;
-      const colDef = colDefsMap.get(field);
-      if (!colDef) return 0;
-
-      const valA = getCellValue(a, field);
-      const valB = getCellValue(b, field);
-
-      if (valA === valB) return 0;
-      if (valA === null || valA === undefined) return direction === 'asc' ? 1 : -1;
-      if (valB === null || valB === undefined) return direction === 'asc' ? -1 : 1;
-
-      if (typeof valA === 'number' && typeof valB === 'number') {
-        return direction === 'asc' ? valA - valB : valB - valA;
-      }
-      if (colDef?.filterType === 'date' || (String(valA).match(/^\d{4}-\d{2}-\d{2}/) && String(valB).match(/^\d{4}-\d{2}-\d{2}/))) {
-        const dateA = new Date(String(valA)).getTime();
-        const dateB = new Date(String(valB)).getTime();
-        if (!isNaN(dateA) && !isNaN(dateB)) {
-            return direction === 'asc' ? dateA - dateB : dateB - dateA;
-        }
-      }
-      if (typeof valA === 'string' && typeof valB === 'string') {
-        return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-      }
-      return direction === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
-    });
-
-    return dataToSort;
+    return sortRows(filteredData, colDefsMap, state.sortConfig, state.groupedBy, isTreeData);
   }, [filteredData, state.sortConfig, state.groupedBy, colDefsMap, isTreeData]);
 
   // Report the filtered+sorted rows to the host (for external summaries/KPIs).
@@ -1375,23 +1180,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const detailColumnLeft = enableRowSelection ? 50 : 0;
   const totalColSpan = orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0) + (masterDetail ? 1 : 0);
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
-
-  const computeAggregate = (items: ProcessedRow<TData>[], col: ColumnDefinition<TData>): string => {
-    if (col.aggregate === 'count') return String(items.length);
-    const nums = items
-      .map(item => parseFloat(String(getCellValue(item, col.field))))
-      .filter(n => !isNaN(n));
-    if (nums.length === 0) return '';
-    let result: number;
-    switch (col.aggregate) {
-      case 'sum': result = nums.reduce((a, b) => a + b, 0); break;
-      case 'avg': result = nums.reduce((a, b) => a + b, 0) / nums.length; break;
-      case 'min': result = Math.min(...nums); break;
-      case 'max': result = Math.max(...nums); break;
-      default: return '';
-    }
-    return result.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  };
 
   const aggregateLabels: Record<string, string> = { sum: 'Sum', avg: 'Avg', min: 'Min', max: 'Max', count: 'Count' };
 
