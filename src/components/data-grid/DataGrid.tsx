@@ -696,16 +696,24 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     }
   };
 
+  // Callers routinely pass globalFilterFields as an inline literal; key the memo on
+  // its content so a fresh-but-equal array can't cascade new identities through
+  // filteredData/sortedData (which feeds onFilteredDataChange and can loop a parent
+  // that setStates in response).
+  const globalFilterFieldsKey = globalFilterFields?.join(' ');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableGlobalFilterFields = React.useMemo(() => globalFilterFields, [globalFilterFieldsKey]);
+
   const filteredData = React.useMemo(() => {
     return filterRows({
       rows: baseDataForProcessing,
       columns: processedColumnDefs,
       visibleColumns: state.visibleColumns,
       globalFilter: state.globalFilter,
-      globalFilterFields,
+      globalFilterFields: stableGlobalFilterFields,
       columnFilters: state.columnFilters,
     });
-  }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, globalFilterFields]);
+  }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, stableGlobalFilterFields]);
 
   const sortedData = React.useMemo(() => {
     return sortRows(filteredData, colDefsMap, state.sortConfig, state.groupedBy, isTreeData);
@@ -715,10 +723,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // The callback is kept in a ref so an unstable function identity doesn't re-fire the effect.
   const onFilteredDataChangeRef = React.useRef(onFilteredDataChange);
   onFilteredDataChangeRef.current = onFilteredDataChange;
+  // Skip the emit when the row set is unchanged element-for-element: a parent that
+  // setStates in its callback re-renders us, and re-emitting an equal list would
+  // ping-pong forever (and clear transient state like range selections).
+  const lastEmittedRowsRef = React.useRef<TData[] | null>(null);
   React.useEffect(() => {
-    onFilteredDataChangeRef.current?.(
-      sortedData.filter(r => !r.isGroupHeader).map(r => r.originalRow)
-    );
+    const rows = sortedData.filter(r => !r.isGroupHeader).map(r => r.originalRow);
+    const last = lastEmittedRowsRef.current;
+    if (last && last.length === rows.length && last.every((r, i) => r === rows[i])) return;
+    lastEmittedRowsRef.current = rows;
+    onFilteredDataChangeRef.current?.(rows);
   }, [sortedData]);
 
   const dataWithGroupHeaders = React.useMemo(() => {
@@ -930,11 +944,20 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     colIndex >= rangeBounds.left && colIndex <= rangeBounds.right;
 
   // Any change to the underlying display list shifts row indices, so an existing
-  // range would silently point at different cells — drop it instead.
+  // range would silently point at different cells — drop it instead. Keyed on the
+  // row id sequence, not array identity: a re-render that reproduces the same rows
+  // (e.g. a parent setState from onFilteredDataChange) must not clear the range.
+  const paginatedRowIdsKey = React.useMemo(
+    () => paginatedData.map(r => r.id).join(' '),
+    [paginatedData]
+  );
+  const prevRowIdsKeyRef = React.useRef(paginatedRowIdsKey);
   React.useEffect(() => {
+    if (prevRowIdsKeyRef.current === paginatedRowIdsKey) return;
+    prevRowIdsKeyRef.current = paginatedRowIdsKey;
     setRangeAnchor(null);
     setRangeEnd(null);
-  }, [paginatedData]);
+  }, [paginatedRowIdsKey]);
 
   const handleCellMouseDown = (e: React.MouseEvent, dataIndex: number, colIndex: number) => {
     if (!enableRangeSelection || e.button !== 0 || state.editingCell) return;
