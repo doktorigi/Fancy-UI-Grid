@@ -40,6 +40,7 @@ export interface ColumnDefinition<TData = any> {
   filterOptions?: { label: string; value: any }[];
   dateTreeBuckets?: DateTreeBucket[]; // Auto-derived for filterType 'date-tree' if not supplied
   iconName?: string;
+  group?: string; // Header group label; contiguous columns sharing a label render under one spanning header
 }
 
 export interface SortConfig<TData = any> {
@@ -137,6 +138,13 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   onFilteredDataChange?: (rows: TData[]) => void; // Fires with the filtered+sorted rows whenever they change
   globalFilterFields?: (keyof TData & string)[]; // Restrict the global search box to these fields; omit to search all visible columns
   globalFilterPlaceholder?: string;
+  enableFillHandle?: boolean; // Drag the range corner to fill editable cells (series or repeat). Default true; needs onCellEdit + range selection.
+  enableClipboardPaste?: boolean; // Ctrl+V pastes TSV into editable cells starting at the selection. Default true; needs onCellEdit.
+  enableUndoRedo?: boolean; // Ctrl+Z / Ctrl+Y over cell edits made through the grid. Default true; needs onCellEdit.
+  enableStatusBar?: boolean; // Footer bar with filtered/selected counts and range Sum/Avg/Min/Max/Count. Default true.
+  enableFind?: boolean; // Ctrl+F find-in-grid bar with match highlighting and next/previous. Default true.
+  enableRowReorder?: boolean; // Drag-handle column for reordering rows. Default false; needs onRowsReordered. Ignored for tree data and while sorted/grouped.
+  onRowsReordered?: (data: TData[]) => void; // Receives the full data array in its new order after a row drag
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {

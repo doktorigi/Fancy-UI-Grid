@@ -258,6 +258,119 @@ export function sortRows<TData extends HierarchicalData<TData>>(
   return dataToSort;
 }
 
+// Strict numeric coercion for stats/fill: whole-string numbers only (optionally with
+// $ , separators), so ISO dates like '2024-01-05' never count as the number 2024.
+export function toStrictNumber(value: any): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (value === null || value === undefined) return null;
+  const str = String(value).replace(/[$,]/g, '').trim();
+  if (str === '') return null;
+  const num = Number(str);
+  return Number.isFinite(num) ? num : null;
+}
+
+// Parses TSV clipboard text (as produced by Excel and this grid's copy) into a matrix.
+// A single trailing newline is an artifact of copying, not an empty row.
+export function parseClipboardText(text: string): string[][] {
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const trimmed = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
+  if (trimmed === '') return [];
+  return trimmed.split('\n').map(line => line.split('\t'));
+}
+
+// Values for extending a fill-handle drag by `count` cells. A constant-step numeric
+// source continues the arithmetic series (Excel's linear fill); anything else repeats
+// the source pattern cyclically.
+export function computeFillValues(sourceValues: any[], count: number): any[] {
+  if (sourceValues.length === 0 || count <= 0) return [];
+  if (sourceValues.length >= 2) {
+    const nums = sourceValues.map(toStrictNumber);
+    if (nums.every((n): n is number => n !== null)) {
+      const step = nums[1] - nums[0];
+      const constantStep = nums.every((n, i) => i === 0 || Math.abs(n - nums[i - 1] - step) < 1e-9);
+      if (constantStep) {
+        return Array.from({ length: count }, (_, i) => nums[nums.length - 1] + step * (i + 1));
+      }
+    }
+  }
+  return Array.from({ length: count }, (_, i) => sourceValues[i % sourceValues.length]);
+}
+
+export interface RangeStats {
+  count: number; // non-empty cells
+  numericCount: number;
+  sum: number;
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export function computeRangeStats(values: any[]): RangeStats {
+  const nonEmpty = values.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+  const nums = nonEmpty.map(toStrictNumber).filter((n): n is number => n !== null);
+  const sum = nums.reduce((a, b) => a + b, 0);
+  return {
+    count: nonEmpty.length,
+    numericCount: nums.length,
+    sum,
+    avg: nums.length > 0 ? sum / nums.length : null,
+    min: nums.length > 0 ? Math.min(...nums) : null,
+    max: nums.length > 0 ? Math.max(...nums) : null,
+  };
+}
+
+export interface HeaderGroupSpan<TData extends HierarchicalData<TData>> {
+  group?: string;
+  columns: ColumnDefinition<TData>[];
+}
+
+// Merges contiguous columns sharing a `group` label into header spans. Ungrouped
+// columns stay solo so pinned/sticky offsets can be reused per column. Call this per
+// region (left-pinned / scrollable / right-pinned) so spans never straddle a sticky
+// boundary.
+export function buildHeaderGroupSpans<TData extends HierarchicalData<TData>>(
+  cols: ColumnDefinition<TData>[]
+): HeaderGroupSpan<TData>[] {
+  const spans: HeaderGroupSpan<TData>[] = [];
+  cols.forEach(col => {
+    const last = spans[spans.length - 1];
+    if (col.group && last && last.group === col.group) {
+      last.columns.push(col);
+    } else {
+      spans.push({ group: col.group, columns: [col] });
+    }
+  });
+  return spans;
+}
+
+export interface CellMatch {
+  rowIndex: number; // index in the display list the search ran over
+  rowId: string | number;
+  field: string;
+}
+
+// Case-insensitive substring search across data cells (group headers are skipped).
+// Matches are ordered row-major so next/previous walks the grid naturally.
+export function findCellMatches<TData extends HierarchicalData<TData>>(
+  rows: ProcessedRow<TData>[],
+  columns: ColumnDefinition<TData>[],
+  query: string
+): CellMatch[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const matches: CellMatch[] = [];
+  rows.forEach((row, rowIndex) => {
+    if (row.isGroupHeader) return;
+    columns.forEach(col => {
+      const value = getCellValue(row, col.field);
+      if (value !== null && value !== undefined && String(value).toLowerCase().includes(q)) {
+        matches.push({ rowIndex, rowId: row.id, field: col.field });
+      }
+    });
+  });
+  return matches;
+}
+
 export function computeAggregate<TData extends HierarchicalData<TData>>(
   items: ProcessedRow<TData>[],
   col: ColumnDefinition<TData>

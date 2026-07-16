@@ -31,6 +31,13 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Copy to Clipboard** — Ctrl/Cmd+C copies the focused cell, or all selected rows (with headers) as tab-separated text ready to paste into a spreadsheet.
 * **Export to CSV & XLSX** — exports the current filtered/sorted view, with CSV formula-injection protection.
 * **Grid State Persistence** — column widths, order, pins, filters, sort, page size, visibility, and grouping are saved to `localStorage` (configurable key per grid instance).
+* **Fill Handle** — drag the square at the corner of a range selection to fill editable cells below/above/beside it: constant-step numeric sources extend as a series (1, 2 → 3, 4, …), everything else repeats. On by default when `onCellEdit` is provided (`enableFillHandle`).
+* **Clipboard Paste** — Ctrl/Cmd+V pastes TSV (straight from Excel or another grid) into editable cells starting at the selection; a single copied value fills the whole selected range. On by default with `onCellEdit` (`enableClipboardPaste`).
+* **Undo / Redo** — Ctrl/Cmd+Z and Ctrl/Cmd+Y (or Ctrl+Shift+Z) walk back and reapply grid-driven edits — inline edits, pastes, and fills each undo as one batch. On by default with `onCellEdit` (`enableUndoRedo`).
+* **Status Bar** — slim footer with the filtered/total row count, selection count, and live **Sum / Avg / Min / Max / Count** for the selected cell range, Excel-style. On by default (`enableStatusBar`).
+* **Column Header Groups** — give columns a `group: 'Premium'` label and contiguous runs render under one spanning header row; the Columns menu gains group-level show/hide checkboxes.
+* **Find in Grid** — Ctrl/Cmd+F (or the Find button) opens a find bar that highlights matching cells across all pages, with next/previous navigation that jumps pages or scrolls the virtualized viewport. On by default (`enableFind`).
+* **Row Drag Reorder** — set `enableRowReorder` with an `onRowsReordered` callback and each row gets a grip handle for drag-and-drop reordering; the handle deactivates while sorting or grouping is applied (the visual order wouldn't stick).
 * **Comprehensive Keyboard Navigation** — arrow keys, Space to select/toggle, Enter/F2 to edit, Escape to cancel, Ctrl/Cmd+C to copy.
 * **Theming** — Light, Dark, and System themes.
 
@@ -122,8 +129,12 @@ See [`streamlit-component/README.md`](streamlit-component/README.md) for details
 | Shift + Arrow keys | Extend the cell range selection |
 | Space | Select/deselect row, or toggle tree node / group |
 | Enter / F2 | Edit the focused cell (if editable) |
-| Escape | Cancel editing, or clear the range selection / context menu |
+| Escape | Cancel editing, or clear the range selection / context menu / find bar |
 | Ctrl/Cmd + C | Copy the selected cell range, selected rows, or focused cell as TSV |
+| Ctrl/Cmd + V | Paste TSV into editable cells at the selection |
+| Ctrl/Cmd + Z | Undo the last grid-driven edit batch |
+| Ctrl/Cmd + Y (or Ctrl+Shift+Z) | Redo |
+| Ctrl/Cmd + F | Open find-in-grid (Enter = next match, Shift+Enter = previous) |
 
 ## Contributing
 

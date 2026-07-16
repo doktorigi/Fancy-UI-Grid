@@ -24,12 +24,25 @@ import { DataGridHeaderCell } from './DataGridHeaderCell';
 import { DataGridPagination } from './DataGridPagination';
 import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { DataGridGroupingPanel } from './DataGridGroupingPanel';
+import { DataGridStatusBar } from './DataGridStatusBar';
+import { DataGridFindBar } from './DataGridFindBar';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ChevronRight, ChevronDown, FileDown, FilterX } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileDown, FilterX, GripVertical, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportToCsv, exportToXlsx } from '@/lib/exportUtils';
-import { computeAggregate, dateTreeKeyOf, filterRows, sortRows } from '@/lib/gridProcessing';
+import {
+  buildHeaderGroupSpans,
+  computeAggregate,
+  computeFillValues,
+  computeRangeStats,
+  dateTreeKeyOf,
+  filterRows,
+  findCellMatches,
+  parseClipboardText,
+  sortRows,
+  toStrictNumber,
+} from '@/lib/gridProcessing';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,6 +75,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   onFilteredDataChange,
   globalFilterFields,
   globalFilterPlaceholder = 'Search all columns...',
+  enableFillHandle = true,
+  enableClipboardPaste = true,
+  enableUndoRedo = true,
+  enableStatusBar = true,
+  enableFind = true,
+  enableRowReorder = false,
+  onRowsReordered,
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -126,6 +146,31 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const [rangeEnd, setRangeEnd] = React.useState<{ rowIndex: number; colIndex: number } | null>(null);
   const [isDraggingRange, setIsDraggingRange] = React.useState(false);
   const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number; rowId: string | number; colField: keyof TData & string } | null>(null);
+
+  // Fill handle: fillEnd tracks the cell under the pointer while dragging the range corner.
+  const [isFilling, setIsFilling] = React.useState(false);
+  const [fillEnd, setFillEnd] = React.useState<{ rowIndex: number; colIndex: number } | null>(null);
+
+  // Find-in-grid. Matches are recomputed only while the bar is open.
+  const [findOpen, setFindOpen] = React.useState(false);
+  const [findQuery, setFindQuery] = React.useState('');
+  const [findActiveIdx, setFindActiveIdx] = React.useState(0);
+
+  // Row drag-and-drop reorder.
+  const [draggedRowId, setDraggedRowId] = React.useState<string | number | null>(null);
+  const [rowDropTarget, setRowDropTarget] = React.useState<{ rowId: string | number; position: 'above' | 'below' } | null>(null);
+
+  // Undo/redo over grid-driven cell edits. Refs, not state: the stacks never drive a
+  // render on their own — the parent's data change does.
+  type EditRecord = { rowId: string | number; field: keyof TData & string; prevValue: any; nextValue: any };
+  const undoStackRef = React.useRef<EditRecord[][]>([]);
+  const redoStackRef = React.useRef<EditRecord[][]>([]);
+
+  const canEditCells = !!onCellEdit;
+  const fillHandleEnabled = enableFillHandle && enableRangeSelection && canEditCells;
+  const pasteEnabled = enableClipboardPaste && canEditCells;
+  const undoRedoEnabled = enableUndoRedo && canEditCells;
+  const rowReorderEnabled = enableRowReorder && !!onRowsReordered && !isTreeData;
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -569,6 +614,56 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     setState(prevState => ({ ...prevState, editInputValue: e.target.value }));
   };
 
+  // Central commit path for every grid-driven edit (inline, paste, fill). Captures
+  // prior values so undo can restore them, then hands each cell to onCellEdit — the
+  // parent stays the data owner.
+  type PendingEdit = { rowId: string | number; field: keyof TData & string; value: any };
+  const applyEdits = (edits: PendingEdit[]) => {
+    if (!onCellEdit || edits.length === 0) return;
+    const rowById = new Map(baseDataForProcessing.map(r => [r.id, r]));
+    const batch: EditRecord[] = [];
+    edits.forEach(edit => {
+      const row = rowById.get(edit.rowId);
+      const prevValue = row ? getCellValue(row, edit.field) : undefined;
+      if (prevValue === edit.value) return; // no-ops don't pollute undo history
+      batch.push({ rowId: edit.rowId, field: edit.field, prevValue, nextValue: edit.value });
+    });
+    if (batch.length === 0) return;
+    batch.forEach(e => onCellEdit(e.rowId, e.field, e.nextValue));
+    if (undoRedoEnabled) {
+      undoStackRef.current.push(batch);
+      if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+      redoStackRef.current = [];
+    }
+  };
+
+  const handleUndo = () => {
+    const batch = undoStackRef.current.pop();
+    if (!batch || !onCellEdit) return;
+    [...batch].reverse().forEach(e => onCellEdit(e.rowId, e.field, e.prevValue));
+    redoStackRef.current.push(batch);
+  };
+
+  const handleRedo = () => {
+    const batch = redoStackRef.current.pop();
+    if (!batch || !onCellEdit) return;
+    batch.forEach(e => onCellEdit(e.rowId, e.field, e.nextValue));
+    undoStackRef.current.push(batch);
+  };
+
+  // Mirrors the inline-edit coercion: numeric columns take numbers only. Returns
+  // undefined when the raw value can't be coerced — callers skip that cell.
+  const coerceValueForCell = (rowId: string | number, field: keyof TData & string, raw: any): any => {
+    const columnDef = colDefsMap.get(field);
+    const originalRowData = baseDataForProcessing.find(r => r.id === rowId)?.originalRow;
+    const isNumericColumn = columnDef?.filterType === 'number' || (originalRowData && typeof originalRowData[field] === 'number');
+    if (isNumericColumn) {
+      const num = toStrictNumber(raw);
+      return num === null ? undefined : num;
+    }
+    return raw;
+  };
+
   const handleEditCommit = () => {
     if (state.editingCell && onCellEdit) {
       const { rowId, field } = state.editingCell;
@@ -579,10 +674,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       if (columnDef?.filterType === 'number' || (originalRowData && typeof originalRowData[field] === 'number')) {
         valueToCommit = parseFloat(state.editInputValue);
         if (isNaN(valueToCommit) && originalRowData) {
-          valueToCommit = getCellValue({originalRow: originalRowData} as ProcessedRow<TData>, field); 
+          valueToCommit = getCellValue({originalRow: originalRowData} as ProcessedRow<TData>, field);
         }
       }
-      onCellEdit(rowId, field, valueToCommit);
+      applyEdits([{ rowId, field, value: valueToCommit }]);
     }
     setState(prevState => ({ ...prevState, editingCell: null, editInputValue: '' }));
   };
@@ -790,6 +885,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const stickyOffsets = React.useMemo(() => {
     const left: Record<string, number> = {};
     let currentLeftOffset = 0;
+    if (rowReorderEnabled) {
+        currentLeftOffset += 32; // drag-handle column
+    }
     if (enableRowSelection) {
         currentLeftOffset += 50;
     }
@@ -812,7 +910,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       }
     });
     return { left, right };
-  }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection, masterDetail]);
+  }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection, masterDetail, rowReorderEnabled]);
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.filter(r => !r.isGroupHeader).every(row => state.selectedRows.has(row.id));
 
@@ -860,6 +958,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   };
 
   const handleCellMouseEnter = (dataIndex: number, colIndex: number) => {
+    if (isFilling) {
+      setFillEnd({ rowIndex: dataIndex, colIndex });
+      return;
+    }
     if (isDraggingRange) {
       setRangeEnd({ rowIndex: dataIndex, colIndex });
     }
@@ -871,6 +973,303 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     document.addEventListener('mouseup', onMouseUp);
     return () => document.removeEventListener('mouseup', onMouseUp);
   }, [isDraggingRange]);
+
+  // The rectangle the fill will extend into. Vertical extension wins over horizontal
+  // when the pointer is diagonal, matching Excel.
+  const fillZone = React.useMemo(() => {
+    if (!isFilling || !fillEnd || !rangeBounds) return null;
+    const { top, bottom, left, right } = rangeBounds;
+    if (fillEnd.rowIndex > bottom) return { top: bottom + 1, bottom: fillEnd.rowIndex, left, right, direction: 'down' as const };
+    if (fillEnd.rowIndex < top) return { top: fillEnd.rowIndex, bottom: top - 1, left, right, direction: 'up' as const };
+    if (fillEnd.colIndex > right) return { top, bottom, left: right + 1, right: fillEnd.colIndex, direction: 'right' as const };
+    if (fillEnd.colIndex < left) return { top, bottom, left: fillEnd.colIndex, right: left - 1, direction: 'left' as const };
+    return null;
+  }, [isFilling, fillEnd, rangeBounds]);
+
+  const isCellInFillZone = (dataIndex: number, colIndex: number): boolean =>
+    !!fillZone &&
+    dataIndex >= fillZone.top && dataIndex <= fillZone.bottom &&
+    colIndex >= fillZone.left && colIndex <= fillZone.right;
+
+  const handleFillMouseDown = (e: React.MouseEvent) => {
+    if (!fillHandleEnabled || !rangeBounds || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsFilling(true);
+    setFillEnd(null);
+  };
+
+  const applyFill = () => {
+    if (!fillZone || !rangeBounds || !onCellEdit) return;
+    const edits: PendingEdit[] = [];
+    const cols = orderedVisibleColumnDefs;
+
+    if (fillZone.direction === 'down' || fillZone.direction === 'up') {
+      for (let c = fillZone.left; c <= fillZone.right; c++) {
+        const colDef = cols[c];
+        if (!colDef?.editable) continue;
+        const sourceRows: ProcessedRow<TData>[] = [];
+        for (let r = rangeBounds.top; r <= rangeBounds.bottom; r++) {
+          const row = paginatedData[r];
+          if (row && !row.isGroupHeader) sourceRows.push(row);
+        }
+        if (sourceRows.length === 0) continue;
+        let source = sourceRows.map(row => getCellValue(row, colDef.field));
+        const targetIndices: number[] = [];
+        if (fillZone.direction === 'down') {
+          for (let r = fillZone.top; r <= fillZone.bottom; r++) targetIndices.push(r);
+        } else {
+          for (let r = fillZone.bottom; r >= fillZone.top; r--) targetIndices.push(r);
+          source = [...source].reverse();
+        }
+        const values = computeFillValues(source, targetIndices.length);
+        targetIndices.forEach((r, i) => {
+          const row = paginatedData[r];
+          if (!row || row.isGroupHeader) return;
+          const value = coerceValueForCell(row.id, colDef.field, values[i]);
+          if (value !== undefined) edits.push({ rowId: row.id, field: colDef.field, value });
+        });
+      }
+    } else {
+      for (let r = fillZone.top; r <= fillZone.bottom; r++) {
+        const row = paginatedData[r];
+        if (!row || row.isGroupHeader) continue;
+        let source: any[] = [];
+        for (let c = rangeBounds.left; c <= rangeBounds.right; c++) {
+          const colDef = cols[c];
+          if (colDef) source.push(getCellValue(row, colDef.field));
+        }
+        if (source.length === 0) continue;
+        const targetCols: number[] = [];
+        if (fillZone.direction === 'right') {
+          for (let c = fillZone.left; c <= fillZone.right; c++) targetCols.push(c);
+        } else {
+          for (let c = fillZone.right; c >= fillZone.left; c--) targetCols.push(c);
+          source = [...source].reverse();
+        }
+        const values = computeFillValues(source, targetCols.length);
+        targetCols.forEach((c, i) => {
+          const colDef = cols[c];
+          if (!colDef?.editable) return;
+          const value = coerceValueForCell(row.id, colDef.field, values[i]);
+          if (value !== undefined) edits.push({ rowId: row.id, field: colDef.field, value });
+        });
+      }
+    }
+    applyEdits(edits);
+  };
+
+  // Keep the latest applyFill reachable from the one-shot document mouseup listener
+  // without re-subscribing on every pointer move.
+  const applyFillRef = React.useRef(applyFill);
+  applyFillRef.current = applyFill;
+  React.useEffect(() => {
+    if (!isFilling) return;
+    const onMouseUp = () => {
+      applyFillRef.current();
+      setIsFilling(false);
+      setFillEnd(null);
+    };
+    document.addEventListener('mouseup', onMouseUp);
+    return () => document.removeEventListener('mouseup', onMouseUp);
+  }, [isFilling]);
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (!pasteEnabled || state.editingCell) return;
+    // Pastes aimed at real inputs (global search, filters, editors) stay theirs.
+    if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"]')) return;
+    const matrix = parseClipboardText(e.clipboardData.getData('text/plain'));
+    if (matrix.length === 0) return;
+
+    let startRow: number;
+    let startCol: number;
+    if (rangeBounds) {
+      startRow = rangeBounds.top;
+      startCol = rangeBounds.left;
+    } else if (state.focusedCell) {
+      startRow = paginatedData.findIndex(r => r.id === state.focusedCell!.rowId);
+      startCol = orderedVisibleColumnDefs.findIndex(c => c.field === state.focusedCell!.colField);
+    } else {
+      return;
+    }
+    if (startRow < 0 || startCol < 0) return;
+    e.preventDefault();
+
+    const edits: PendingEdit[] = [];
+    const isSingleValue = matrix.length === 1 && matrix[0].length === 1;
+    if (isSingleValue && rangeBounds) {
+      // One copied cell fills the whole selected range (Excel behavior).
+      for (let r = rangeBounds.top; r <= rangeBounds.bottom; r++) {
+        const row = paginatedData[r];
+        if (!row || row.isGroupHeader) continue;
+        for (let c = rangeBounds.left; c <= rangeBounds.right; c++) {
+          const colDef = orderedVisibleColumnDefs[c];
+          if (!colDef?.editable) continue;
+          const value = coerceValueForCell(row.id, colDef.field, matrix[0][0]);
+          if (value !== undefined) edits.push({ rowId: row.id, field: colDef.field, value });
+        }
+      }
+    } else {
+      // The matrix maps cell-per-cell from the anchor; group header rows are skipped
+      // without consuming a matrix row.
+      let matrixRow = 0;
+      for (let r = startRow; r < paginatedData.length && matrixRow < matrix.length; r++) {
+        const row = paginatedData[r];
+        if (!row || row.isGroupHeader) continue;
+        const rowValues = matrix[matrixRow++];
+        for (let j = 0; j < rowValues.length; j++) {
+          const colDef = orderedVisibleColumnDefs[startCol + j];
+          if (!colDef?.editable) continue;
+          const value = coerceValueForCell(row.id, colDef.field, rowValues[j]);
+          if (value !== undefined) edits.push({ rowId: row.id, field: colDef.field, value });
+        }
+      }
+    }
+    applyEdits(edits);
+  };
+
+  // ---- Find-in-grid ----
+  const findMatches = React.useMemo(
+    () => (findOpen && enableFind ? findCellMatches(dataToPaginate, orderedVisibleColumnDefs, findQuery) : []),
+    [findOpen, enableFind, findQuery, dataToPaginate, orderedVisibleColumnDefs]
+  );
+  const activeMatch = findMatches.length > 0 ? findMatches[Math.min(findActiveIdx, findMatches.length - 1)] : null;
+  const findMatchSet = React.useMemo(
+    () => new Set(findMatches.map(m => `${m.rowId}|${m.field}`)),
+    [findMatches]
+  );
+
+  const goToMatch = (idx: number) => {
+    if (findMatches.length === 0) return;
+    const wrapped = ((idx % findMatches.length) + findMatches.length) % findMatches.length;
+    setFindActiveIdx(wrapped);
+    const match = findMatches[wrapped];
+    setState(prev => ({
+      ...prev,
+      currentPage: virtualized ? prev.currentPage : Math.floor(match.rowIndex / prev.pageSize) + 1,
+      focusedCell: { rowId: match.rowId, colField: match.field as keyof TData & string },
+    }));
+    // Virtualization windows unrendered rows out, so scrollIntoView can't reach them —
+    // jump the scroll container to the match's computed offset instead.
+    if (virtualized && rowOffsets && scrollContainerRef.current) {
+      const displayIdx = displayRows.findIndex(d => !d.isDetail && d.dataIndex === match.rowIndex);
+      if (displayIdx >= 0) {
+        scrollContainerRef.current.scrollTop = Math.max(0, rowOffsets[displayIdx] - virtualizedMaxHeight / 2);
+      }
+    }
+  };
+
+  // First Enter lands on the first match; subsequent ones advance. The ref resets
+  // whenever the query changes so a new search starts from the top again.
+  const findNavigatedRef = React.useRef(false);
+  const handleFindNext = () => {
+    if (findMatches.length === 0) return;
+    if (!findNavigatedRef.current) {
+      findNavigatedRef.current = true;
+      goToMatch(findActiveIdx);
+    } else {
+      goToMatch(findActiveIdx + 1);
+    }
+  };
+  const handleFindPrevious = () => {
+    if (findMatches.length === 0) return;
+    if (!findNavigatedRef.current) {
+      findNavigatedRef.current = true;
+      goToMatch(findActiveIdx);
+    } else {
+      goToMatch(findActiveIdx - 1);
+    }
+  };
+
+  const handleFindQueryChange = (query: string) => {
+    setFindQuery(query);
+    setFindActiveIdx(0);
+    findNavigatedRef.current = false;
+  };
+
+  const closeFindBar = () => {
+    setFindOpen(false);
+    findNavigatedRef.current = false;
+    tableWrapperRef.current?.focus();
+  };
+
+  // ---- Row drag-and-drop reorder ----
+  // Reordering only means something in the data's own order: sorting or grouping
+  // would immediately re-sort whatever the user dropped, so the handle deactivates.
+  const rowReorderActive = rowReorderEnabled && !state.sortConfig && state.groupedBy.length === 0;
+
+  const handleRowDragStart = (e: React.DragEvent, rowId: string | number) => {
+    e.dataTransfer.setData('text/plain', String(rowId));
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedRowId(rowId);
+  };
+
+  const handleRowDragOver = (e: React.DragEvent, targetRowId: string | number) => {
+    if (draggedRowId === null || draggedRowId === targetRowId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const position = e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
+    setRowDropTarget(prev =>
+      prev?.rowId === targetRowId && prev.position === position ? prev : { rowId: targetRowId, position }
+    );
+  };
+
+  const handleRowDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggedRowId !== null && rowDropTarget && onRowsReordered && draggedRowId !== rowDropTarget.rowId) {
+      const items = [...(initialData || [])];
+      const fromIdx = items.findIndex(item => item.id === draggedRowId);
+      if (fromIdx >= 0) {
+        const [moved] = items.splice(fromIdx, 1);
+        const targetIdx = items.findIndex(item => item.id === rowDropTarget.rowId);
+        if (targetIdx >= 0) {
+          items.splice(rowDropTarget.position === 'above' ? targetIdx : targetIdx + 1, 0, moved);
+          onRowsReordered(items);
+        }
+      }
+    }
+    setDraggedRowId(null);
+    setRowDropTarget(null);
+  };
+
+  const handleRowDragEnd = () => {
+    setDraggedRowId(null);
+    setRowDropTarget(null);
+  };
+
+  // ---- Status bar range statistics ----
+  const rangeCellCount = rangeBounds
+    ? (rangeBounds.bottom - rangeBounds.top + 1) * (rangeBounds.right - rangeBounds.left + 1)
+    : 0;
+  const rangeStats = React.useMemo(() => {
+    if (!enableStatusBar || !rangeBounds) return null;
+    const values: any[] = [];
+    for (let r = rangeBounds.top; r <= rangeBounds.bottom; r++) {
+      const row = paginatedData[r];
+      if (!row || row.isGroupHeader) continue;
+      for (let c = rangeBounds.left; c <= rangeBounds.right; c++) {
+        const colDef = orderedVisibleColumnDefs[c];
+        if (colDef) values.push(getCellValue(row, colDef.field));
+      }
+    }
+    return computeRangeStats(values);
+  }, [enableStatusBar, rangeBounds, paginatedData, orderedVisibleColumnDefs]);
+
+  // ---- Column header groups ----
+  // Spans are built per sticky region so a group can never straddle a pinned
+  // boundary; pinned spans reuse the offset of their first (left) / last (right) column.
+  const hasHeaderGroups = orderedVisibleColumnDefs.some(c => c.group);
+  const headerGroupSpans = React.useMemo(() => {
+    if (!hasHeaderGroups) return null;
+    const leftCount = orderedVisibleColumnDefs.filter(c => state.pinnedColumns.left.includes(c.field)).length;
+    const rightCount = orderedVisibleColumnDefs.filter(c => state.pinnedColumns.right.includes(c.field)).length;
+    return {
+      left: buildHeaderGroupSpans(orderedVisibleColumnDefs.slice(0, leftCount)),
+      middle: buildHeaderGroupSpans(orderedVisibleColumnDefs.slice(leftCount, orderedVisibleColumnDefs.length - rightCount)),
+      right: buildHeaderGroupSpans(orderedVisibleColumnDefs.slice(orderedVisibleColumnDefs.length - rightCount)),
+    };
+  }, [hasHeaderGroups, orderedVisibleColumnDefs, state.pinnedColumns]);
 
   // Copy precedence: a multi-cell range wins, then checkbox-selected rows (always
   // with a header row, matching pre-range behavior), then the focused cell.
@@ -952,6 +1351,25 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         navigator.clipboard?.writeText(textToCopy);
       }
       return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && !state.editingCell) {
+      const key = e.key.toLowerCase();
+      if (undoRedoEnabled && key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (undoRedoEnabled && (key === 'y' || (key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+      if (enableFind && key === 'f') {
+        e.preventDefault();
+        setFindOpen(true);
+        return;
+      }
     }
 
     if (enableRangeSelection && e.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && state.focusedCell && !state.editingCell) {
@@ -1066,11 +1484,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         }
         break;
       case 'Escape':
-        if (rangeAnchor || rangeEnd || contextMenu) {
+        if (rangeAnchor || rangeEnd || contextMenu || findOpen) {
           e.preventDefault();
           setRangeAnchor(null);
           setRangeEnd(null);
           setContextMenu(null);
+          if (findOpen) closeFindBar();
         }
         break;
       default:
@@ -1177,8 +1596,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   const checkboxColumnWidth = '50px';
   const detailColumnWidth = '40px';
-  const detailColumnLeft = enableRowSelection ? 50 : 0;
-  const totalColSpan = orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0) + (masterDetail ? 1 : 0);
+  const reorderColumnWidth = '32px';
+  const checkboxColumnLeft = rowReorderEnabled ? 32 : 0;
+  const detailColumnLeft = (enableRowSelection ? 50 : 0) + (rowReorderEnabled ? 32 : 0);
+  const totalColSpan = orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0) + (masterDetail ? 1 : 0) + (rowReorderEnabled ? 1 : 0);
+  // When a group header row is present, the main header row sticks below it (top-8 = 2rem).
+  const headerTopClass = hasHeaderGroups ? 'top-8' : 'top-0';
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
 
   const aggregateLabels: Record<string, string> = { sum: 'Sum', avg: 'Avg', min: 'Min', max: 'Max', count: 'Count' };
@@ -1204,8 +1627,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     <div
       ref={tableWrapperRef}
       className="rounded-lg border bg-card text-card-foreground shadow-sm focus:outline-none"
-      tabIndex={0} 
+      tabIndex={0}
       onKeyDown={handleGridKeyDown}
+      onPaste={handlePaste}
     >
       {enableGroupingPanel && !isTreeData && (
         <DataGridGroupingPanel
@@ -1228,6 +1652,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             <Button variant="ghost" size="sm" onClick={handleClearAllFilters}>
               <FilterX className="mr-2 h-4 w-4" />
               Clear filters ({activeFilterCount})
+            </Button>
+          )}
+          {enableFind && (
+            <Button variant="outline" size="sm" onClick={() => setFindOpen(true)} aria-label="Find in grid (Ctrl+F)">
+              <Search className="mr-2 h-4 w-4" />
+              Find
             </Button>
           )}
           <ColumnVisibilityToggle
@@ -1253,27 +1683,98 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           </DropdownMenu>
         </div>
       </div>
+      {findOpen && enableFind && (
+        <DataGridFindBar
+          query={findQuery}
+          matchCount={findMatches.length}
+          activeMatchIndex={activeMatch ? Math.min(findActiveIdx, findMatches.length - 1) : 0}
+          onQueryChange={handleFindQueryChange}
+          onNext={handleFindNext}
+          onPrevious={handleFindPrevious}
+          onClose={closeFindBar}
+        />
+      )}
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
         className={cn(
           "overflow-x-auto relative",
           virtualized && "overflow-y-auto",
-          isDraggingRange && "select-none"
+          (isDraggingRange || isFilling) && "select-none"
         )}
         style={virtualized ? { maxHeight: `${virtualizedMaxHeight}px` } : undefined}
       >
         <Table>
           <TableHeader>
+            {hasHeaderGroups && headerGroupSpans && (
+              <TableRow className="hover:bg-transparent">
+                {rowReorderEnabled && (
+                  <TableHead
+                    className="h-8 px-0 py-0 sticky-header-cell top-0"
+                    style={{ width: reorderColumnWidth, minWidth: reorderColumnWidth, left: 0, zIndex: 21 }}
+                  />
+                )}
+                {enableRowSelection && (
+                  <TableHead
+                    className="h-8 px-0 py-0 sticky-header-cell top-0"
+                    style={{ width: checkboxColumnWidth, minWidth: checkboxColumnWidth, left: checkboxColumnLeft, zIndex: 21 }}
+                  />
+                )}
+                {masterDetail && (
+                  <TableHead
+                    className="h-8 px-0 py-0 sticky-header-cell top-0"
+                    style={{ width: detailColumnWidth, minWidth: detailColumnWidth, left: detailColumnLeft, zIndex: 21 }}
+                  />
+                )}
+                {(['left', 'middle', 'right'] as const).flatMap(region =>
+                  headerGroupSpans[region].map((span, spanIndex) => {
+                    const stickyStyle: React.CSSProperties = {};
+                    if (region === 'left') {
+                      stickyStyle.left = `${stickyOffsets.left[span.columns[0].field] || 0}px`;
+                    } else if (region === 'right') {
+                      stickyStyle.right = `${stickyOffsets.right[span.columns[span.columns.length - 1].field] || 0}px`;
+                    }
+                    return (
+                      <TableHead
+                        key={`group-${region}-${spanIndex}-${span.columns[0].field}`}
+                        colSpan={span.columns.length}
+                        className={cn(
+                          "h-8 px-2 py-1 sticky top-0 bg-card text-center align-middle",
+                          region !== 'middle' ? "sticky-header-cell" : "z-20",
+                          span.group && "header-group-cell"
+                        )}
+                        style={region !== 'middle' ? { ...stickyStyle, zIndex: 21 } : stickyStyle}
+                      >
+                        {span.group && (
+                          <span className="text-xs font-semibold text-muted-foreground">{span.group}</span>
+                        )}
+                      </TableHead>
+                    );
+                  })
+                )}
+              </TableRow>
+            )}
             <TableRow>
+              {rowReorderEnabled && (
+                <TableHead
+                  className={cn("px-0 py-0 sticky-header-cell", headerTopClass)}
+                  style={{
+                    width: reorderColumnWidth,
+                    minWidth: reorderColumnWidth,
+                    left: 0,
+                    zIndex: 21
+                  }}
+                  aria-label="Row reorder column"
+                />
+              )}
               {enableRowSelection && (
                 <TableHead
-                  className="px-0 py-0 sticky-header-cell top-0"
+                  className={cn("px-0 py-0 sticky-header-cell", headerTopClass)}
                   style={{
                     width: checkboxColumnWidth,
                     minWidth: checkboxColumnWidth,
-                    left: 0,
-                    zIndex: 21 
+                    left: checkboxColumnLeft,
+                    zIndex: 21
                   }}
                 >
                   <div className="px-3 py-2 h-full flex items-center justify-center">
@@ -1288,7 +1789,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               )}
               {masterDetail && (
                 <TableHead
-                  className="px-0 py-0 sticky-header-cell top-0"
+                  className={cn("px-0 py-0 sticky-header-cell", headerTopClass)}
                   style={{
                     width: detailColumnWidth,
                     minWidth: detailColumnWidth,
@@ -1323,7 +1824,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       ...stickyStyle
                     }}
                     className={cn(
-                      "px-0 py-0 sticky top-0 bg-card z-20",
+                      "px-0 py-0 sticky bg-card z-20",
+                      headerTopClass,
                       (isLeftPinned || isRightPinned) && "sticky-header-cell",
                       isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
                       isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
@@ -1427,14 +1929,48 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                   <TableRow
                     key={row.id}
                     data-state={state.selectedRows.has(row.id) ? "selected" : ""}
-                    className={cn(state.selectedRows.has(row.id) && "bg-muted/50")}
+                    className={cn(
+                      state.selectedRows.has(row.id) && "bg-muted/50",
+                      draggedRowId === row.id && "opacity-50",
+                      rowDropTarget?.rowId === row.id && (rowDropTarget.position === 'above' ? "row-drop-above" : "row-drop-below")
+                    )}
                     style={rowStyle}
+                    onDragOver={rowReorderActive && draggedRowId !== null ? (e) => handleRowDragOver(e, row.id) : undefined}
+                    onDrop={rowReorderActive && draggedRowId !== null ? handleRowDrop : undefined}
                   >
+                    {rowReorderEnabled && (
+                      <TableCell
+                        className="px-0 py-2 sticky-body-cell"
+                        style={{
+                          width: reorderColumnWidth,
+                          minWidth: reorderColumnWidth,
+                          left: 0,
+                          zIndex: 11,
+                          ...pinnedCellBg
+                        }}
+                      >
+                        <div
+                          draggable={rowReorderActive}
+                          onDragStart={rowReorderActive ? (e) => handleRowDragStart(e, row.id) : undefined}
+                          onDragEnd={rowReorderActive ? handleRowDragEnd : undefined}
+                          className={cn(
+                            "flex items-center justify-center",
+                            rowReorderActive
+                              ? "cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground"
+                              : "cursor-not-allowed text-muted-foreground/40"
+                          )}
+                          title={rowReorderActive ? "Drag to reorder" : "Clear sorting/grouping to reorder rows"}
+                          aria-label="Drag to reorder row"
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </div>
+                      </TableCell>
+                    )}
                     {enableRowSelection && (
                       <TableCell
                         className="px-3 py-2 sticky-body-cell"
                         style={{
-                          left: 0,
+                          left: checkboxColumnLeft,
                           zIndex: 11,
                           ...pinnedCellBg
                         }}
@@ -1480,6 +2016,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           if (pinnedCellBg) Object.assign(stickyStyle, pinnedCellBg);
                         }
                         const isFocused = state.focusedCell?.rowId === row.id && state.focusedCell?.colField === colDef.field;
+                        const isFillCorner = fillHandleEnabled && !!rangeBounds &&
+                          dataIndex === rangeBounds.bottom && colIndex === rangeBounds.right;
+                        const isFindMatch = findOpen && findMatchSet.has(`${row.id}|${colDef.field}`);
+                        const isActiveFindMatch = isFindMatch && activeMatch?.rowId === row.id && activeMatch?.field === colDef.field;
 
                       return (
                       <TableCell
@@ -1490,10 +2030,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           "px-3 py-2 truncate",
                           colDef.editable && "cursor-pointer",
                           (isLeftPinned || isRightPinned) && "sticky-body-cell",
+                          // sticky cells are already positioning contexts for the fill handle
+                          isFillCorner && !isLeftPinned && !isRightPinned && "relative",
                           isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
                           isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
                           isFocused && !state.editingCell && "cell-focused",
-                          isCellInRange(dataIndex, colIndex) && "cell-range-selected"
+                          isCellInRange(dataIndex, colIndex) && "cell-range-selected",
+                          isCellInFillZone(dataIndex, colIndex) && "cell-fill-preview",
+                          isFindMatch && "cell-find-match",
+                          isActiveFindMatch && "cell-find-current"
                           )}
                         style={{
                           width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
@@ -1508,6 +2053,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         onContextMenu={(e) => handleCellContextMenu(e, dataIndex, colIndex, row.id, colDef.field)}
                       >
                         {renderCellContent(row, colDef)}
+                        {isFillCorner && (
+                          <div
+                            className="fill-handle"
+                            onMouseDown={handleFillMouseDown}
+                            aria-label="Fill handle"
+                          />
+                        )}
                       </TableCell>
                     )}
                     )}
@@ -1535,11 +2087,22 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             <TableFooter>
               {orderedVisibleColumnDefs.some(col => col.aggregate) && (
                 <TableRow className="bg-muted/30 font-semibold border-t">
+                  {rowReorderEnabled && (
+                    <TableCell
+                      className="px-0 py-2 sticky-body-cell"
+                      style={{
+                        width: reorderColumnWidth,
+                        minWidth: reorderColumnWidth,
+                        left: 0,
+                        zIndex: 11
+                      }}
+                    />
+                  )}
                   {enableRowSelection && (
                     <TableCell
                       className="px-3 py-2 sticky-body-cell"
                       style={{
-                        left: 0,
+                        left: checkboxColumnLeft,
                         zIndex: 11
                       }}
                     >
@@ -1610,6 +2173,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           )}
         </Table>
       </div>
+      {enableStatusBar && (
+        <DataGridStatusBar
+          filteredRowCount={sortedData.length}
+          totalRowCount={baseDataForProcessing.length}
+          selectedRowCount={state.selectedRows.size}
+          rangeCellCount={rangeCellCount}
+          rangeStats={rangeStats}
+        />
+      )}
       {virtualized ? (
         <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t gap-4">
           <div className="text-sm text-muted-foreground">

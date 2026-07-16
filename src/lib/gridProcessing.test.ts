@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ActiveFilters, ColumnDefinition, HierarchicalData, ProcessedRow, SortConfig } from '@/types/data-grid';
-import { computeAggregate, filterRows, sortRows } from './gridProcessing';
+import {
+  buildHeaderGroupSpans,
+  computeAggregate,
+  computeFillValues,
+  computeRangeStats,
+  filterRows,
+  findCellMatches,
+  parseClipboardText,
+  sortRows,
+  toStrictNumber,
+} from './gridProcessing';
 
 interface Row extends HierarchicalData<Row> {
   id: number;
@@ -269,4 +279,116 @@ test('filterRows scopes the global filter to globalFilterFields when provided', 
     columnFilters: {},
   });
   assert.deepEqual(rowIds(unscoped), [1, 2]);
+});
+
+// ---- toStrictNumber ----
+
+test('toStrictNumber accepts whole-string numbers and currency formatting only', () => {
+  assert.equal(toStrictNumber(42), 42);
+  assert.equal(toStrictNumber('42.5'), 42.5);
+  assert.equal(toStrictNumber('$1,234.50'), 1234.5);
+  assert.equal(toStrictNumber(' 7 '), 7);
+  assert.equal(toStrictNumber('-3'), -3);
+  assert.equal(toStrictNumber('2024-01-05'), null); // ISO dates are not numbers
+  assert.equal(toStrictNumber('12abc'), null);
+  assert.equal(toStrictNumber(''), null);
+  assert.equal(toStrictNumber(null), null);
+  assert.equal(toStrictNumber(undefined), null);
+  assert.equal(toStrictNumber(NaN), null);
+  assert.equal(toStrictNumber(Infinity), null);
+});
+
+// ---- parseClipboardText ----
+
+test('parseClipboardText parses TSV with CRLF and a trailing newline', () => {
+  assert.deepEqual(parseClipboardText('a\tb\r\nc\td\r\n'), [['a', 'b'], ['c', 'd']]);
+  assert.deepEqual(parseClipboardText('a\nb'), [['a'], ['b']]);
+  assert.deepEqual(parseClipboardText('single'), [['single']]);
+  assert.deepEqual(parseClipboardText(''), []);
+  // Empty cells survive
+  assert.deepEqual(parseClipboardText('a\t\tc'), [['a', '', 'c']]);
+});
+
+// ---- computeFillValues ----
+
+test('computeFillValues extends a constant-step numeric series', () => {
+  assert.deepEqual(computeFillValues([1, 2], 3), [3, 4, 5]);
+  assert.deepEqual(computeFillValues([10, 20, 30], 2), [40, 50]);
+  assert.deepEqual(computeFillValues([5, 3], 2), [1, -1]); // descending
+  assert.deepEqual(computeFillValues(['1', '2'], 2), [3, 4]); // numeric strings
+});
+
+test('computeFillValues repeats the pattern for non-series sources', () => {
+  assert.deepEqual(computeFillValues(['a'], 3), ['a', 'a', 'a']);
+  assert.deepEqual(computeFillValues([7], 2), [7, 7]); // single number copies, not series
+  assert.deepEqual(computeFillValues([1, 2, 4], 4), [1, 2, 4, 1]); // non-constant step
+  assert.deepEqual(computeFillValues(['x', 'y'], 5), ['x', 'y', 'x', 'y', 'x']);
+  assert.deepEqual(computeFillValues([], 3), []);
+  assert.deepEqual(computeFillValues([1, 2], 0), []);
+});
+
+// ---- computeRangeStats ----
+
+test('computeRangeStats aggregates numeric cells and counts non-empty ones', () => {
+  const stats = computeRangeStats([10, 20, '30', 'abc', '', null, undefined]);
+  assert.equal(stats.count, 4); // 10, 20, '30', 'abc'
+  assert.equal(stats.numericCount, 3);
+  assert.equal(stats.sum, 60);
+  assert.equal(stats.avg, 20);
+  assert.equal(stats.min, 10);
+  assert.equal(stats.max, 30);
+});
+
+test('computeRangeStats handles an all-text range', () => {
+  const stats = computeRangeStats(['a', 'b']);
+  assert.equal(stats.count, 2);
+  assert.equal(stats.numericCount, 0);
+  assert.equal(stats.sum, 0);
+  assert.equal(stats.avg, null);
+  assert.equal(stats.min, null);
+  assert.equal(stats.max, null);
+});
+
+// ---- buildHeaderGroupSpans ----
+
+test('buildHeaderGroupSpans merges contiguous same-group columns only', () => {
+  const cols: ColumnDefinition<Row>[] = [
+    { field: 'id', headerText: 'ID' },
+    { field: 'amount', headerText: 'Amount', group: 'Financials' },
+    { field: 'name', headerText: 'Name', group: 'Financials' },
+    { field: 'group', headerText: 'Group' },
+    { field: 'createdAt', headerText: 'Created', group: 'Financials' }, // not contiguous with the first run
+  ];
+  const spans = buildHeaderGroupSpans(cols);
+  assert.deepEqual(
+    spans.map(s => ({ group: s.group, fields: s.columns.map(c => c.field) })),
+    [
+      { group: undefined, fields: ['id'] },
+      { group: 'Financials', fields: ['amount', 'name'] },
+      { group: undefined, fields: ['group'] },
+      { group: 'Financials', fields: ['createdAt'] },
+    ]
+  );
+});
+
+// ---- findCellMatches ----
+
+test('findCellMatches finds case-insensitive substrings row-major and skips group headers', () => {
+  const rows = [
+    row({ id: 1, name: 'Alpha', group: 'match-me' }),
+    { ...row({ id: 99, name: 'match-me' }), isGroupHeader: true } as ProcessedRow<Row>,
+    row({ id: 2, name: 'MATCHing', group: 'other' }),
+  ];
+  const matches = findCellMatches(rows, columnDefs, 'match');
+  assert.deepEqual(
+    matches.map(m => ({ rowId: m.rowId, field: m.field })),
+    [
+      { rowId: 1, field: 'group' },
+      { rowId: 2, field: 'name' },
+    ]
+  );
+  assert.equal(matches[0].rowIndex, 0);
+  assert.equal(matches[1].rowIndex, 2);
+  assert.deepEqual(findCellMatches(rows, columnDefs, '   '), []);
+  assert.deepEqual(findCellMatches(rows, columnDefs, ''), []);
 });

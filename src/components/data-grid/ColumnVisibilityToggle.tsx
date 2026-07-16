@@ -22,6 +22,29 @@ export function ColumnVisibilityToggle<TData>({
   visibleColumns,
   onVisibilityChange,
 }: ColumnVisibilityToggleProps<TData>) {
+  const hideableColumns = allColumns.filter(col => col.hideable !== false);
+  const hasGroups = hideableColumns.some(col => col.group);
+
+  // Preserve definition order while clustering each group's columns under one label.
+  const sections = React.useMemo(() => {
+    if (!hasGroups) return [{ group: undefined as string | undefined, columns: hideableColumns }];
+    const byGroup = new Map<string | undefined, ColumnDefinition<TData>[]>();
+    hideableColumns.forEach(col => {
+      const key = col.group;
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(col);
+    });
+    return Array.from(byGroup.entries()).map(([group, columns]) => ({ group, columns }));
+  }, [hideableColumns, hasGroups]);
+
+  const setGroupVisibility = (columns: ColumnDefinition<TData>[], isVisible: boolean) => {
+    columns.forEach(col => {
+      if (visibleColumns.includes(col.field) !== isVisible) {
+        onVisibilityChange(col.field, isVisible);
+      }
+    });
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -33,18 +56,34 @@ export function ColumnVisibilityToggle<TData>({
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {allColumns
-          .filter(col => col.hideable !== false) // Only show hideable columns
-          .map((column) => (
-            <DropdownMenuCheckboxItem
-              key={column.field}
-              className="capitalize"
-              checked={visibleColumns.includes(column.field)}
-              onCheckedChange={(value) => onVisibilityChange(column.field, !!value)}
-            >
-              {column.headerText}
-            </DropdownMenuCheckboxItem>
-          ))}
+        {sections.map(({ group, columns }, sectionIndex) => {
+          const visibleCount = columns.filter(col => visibleColumns.includes(col.field)).length;
+          return (
+            <React.Fragment key={group ?? `__ungrouped_${sectionIndex}`}>
+              {group && (
+                <DropdownMenuCheckboxItem
+                  className="font-semibold"
+                  checked={visibleCount === columns.length ? true : visibleCount > 0 ? 'indeterminate' : false}
+                  onCheckedChange={(value) => setGroupVisibility(columns, !!value)}
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  {group}
+                </DropdownMenuCheckboxItem>
+              )}
+              {columns.map((column) => (
+                <DropdownMenuCheckboxItem
+                  key={column.field}
+                  className={group ? 'capitalize pl-8' : 'capitalize'}
+                  checked={visibleColumns.includes(column.field)}
+                  onCheckedChange={(value) => onVisibilityChange(column.field, !!value)}
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  {column.headerText}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </React.Fragment>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

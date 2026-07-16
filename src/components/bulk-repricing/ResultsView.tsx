@@ -72,6 +72,28 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
     alert(`Excel Rater for Policy ${row.policyNo}. This would call the excel download from coherent with the rater inputs and outputs.`);
   };
 
+  // Cell edits (inline, paste, fill handle) land here; editing New Premium keeps the
+  // Difference column consistent. The virtualized demo dataset is synthetic, so edits
+  // and reordering only apply to the real 10-row dataset.
+  const handleCellEdit = (rowId: string | number, field: keyof ResultPolicy & string, value: any) => {
+    if (virtualizedDemo) return;
+    setResultsData(prev =>
+      prev.map(row => {
+        if (row.id !== rowId) return row;
+        const updated = { ...row, [field]: value };
+        if (field === 'newPremium' && typeof value === 'number') {
+          updated.difference = Math.round((value - row.currentPremium) * 100) / 100;
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleRowsReordered = (data: ResultPolicy[]) => {
+    if (virtualizedDemo) return;
+    setResultsData(data);
+  };
+
 
   const resultsGridColumnDefs = useMemo<ColumnDefinition<ResultPolicy>[]>(() => [
     { field: 'company', headerText: 'Company', sortable: true, filterable: true, filterType: 'text', defaultWidth: '180px' },
@@ -94,6 +116,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterType: 'number',
       defaultWidth: '150px',
       aggregate: 'sum',
+      group: 'Premium',
       cellRenderer: (value) => formatCurrency(value),
     },
     {
@@ -104,6 +127,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterType: 'number',
       defaultWidth: '150px',
       aggregate: 'sum',
+      group: 'Premium',
+      editable: true,
       cellRenderer: (value) => formatCurrency(value),
     },
     {
@@ -114,6 +139,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterType: 'number',
       defaultWidth: '120px',
       aggregate: 'sum',
+      group: 'Premium',
       cellRenderer: (value) => (
         <span className={value > 0 ? 'text-red-600 dark:text-red-400' : value < 0 ? 'text-green-600 dark:text-green-400' : ''}>
           {formatCurrency(value)}
@@ -207,6 +233,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           enableGroupingPanel={true}
           virtualized={virtualizedDemo}
           storageKey="repricingResultsGrid"
+          onCellEdit={handleCellEdit}
+          enableRowReorder={!virtualizedDemo}
+          onRowsReordered={handleRowsReordered}
           detailRenderer={(row) => (
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
