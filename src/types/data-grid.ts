@@ -1,7 +1,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 
-export type FilterType = 'text' | 'number' | 'date' | 'select' | 'boolean';
+export type FilterType = 'text' | 'number' | 'date' | 'date-tree' | 'select' | 'boolean';
 export type AggregateFunction = 'sum' | 'avg' | 'min' | 'max' | 'count';
 export type NumberFilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'between';
 export const numberFilterOperators: NumberFilterOperator[] = ['=', '!=', '<', '>', '<=', '>=', 'between'];
@@ -38,6 +38,7 @@ export interface ColumnDefinition<TData = any> {
   resizable?: boolean; // Default true
   reorderable?: boolean; // Default true
   filterOptions?: { label: string; value: any }[];
+  dateTreeBuckets?: DateTreeBucket[]; // Auto-derived for filterType 'date-tree' if not supplied
   iconName?: string;
 }
 
@@ -73,8 +74,17 @@ export interface BooleanFilterValue extends BaseFilterValue {
   type: 'boolean';
   value?: boolean;
 }
+export interface DateTreeFilterValue extends BaseFilterValue {
+  type: 'date-tree';
+  selected: string[]; // 'YYYY-MM' keys; empty/undefined means no filter (show all)
+}
 
-export type FilterValue = TextFilterValue | NumberFilterValue | DateFilterValue | SelectFilterValue | BooleanFilterValue;
+export type FilterValue = TextFilterValue | NumberFilterValue | DateFilterValue | SelectFilterValue | BooleanFilterValue | DateTreeFilterValue;
+
+export interface DateTreeBucket {
+  year: string;
+  months: string[]; // '01'..'12', present in the data for that year
+}
 
 export interface ActiveFilters<TData = any> {
   [field: string]: FilterValue;
@@ -118,6 +128,10 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   storageKey?: string; // localStorage key for state persistence; set a unique key per grid instance
   virtualized?: boolean;
   rowHeight?: number;
+  getRowStyle?: (row: TData) => React.CSSProperties | undefined; // Inline style for data rows (e.g. status background)
+  onFilteredDataChange?: (rows: TData[]) => void; // Fires with the filtered+sorted rows whenever they change
+  globalFilterFields?: (keyof TData & string)[]; // Restrict the global search box to these fields; omit to search all visible columns
+  globalFilterPlaceholder?: string;
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {

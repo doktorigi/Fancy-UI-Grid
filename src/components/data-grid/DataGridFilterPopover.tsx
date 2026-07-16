@@ -5,10 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover as InnerPopover, PopoverContent as InnerPopoverContent, PopoverTrigger as InnerPopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Calendar } from '@/components/ui/calendar';
-import type { ColumnDefinition, FilterValue, NumberFilterOperator, DateRangePreset } from '@/types/data-grid';
+import type { ColumnDefinition, FilterValue, NumberFilterOperator, DateRangePreset, DateTreeFilterValue } from '@/types/data-grid';
 import { numberFilterOperators, dateRangePresetOptions } from '@/types/data-grid';
-import { FilterX, CalendarIcon } from 'lucide-react';
+import { FilterX, CalendarIcon, ChevronRight, ChevronDown } from 'lucide-react';
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +25,10 @@ export function DataGridFilterPopover<TData>({
   filterValue,
   onFilterChange,
 }: DataGridFilterPopoverProps<TData>) {
+  const [optionSearch, setOptionSearch] = React.useState('');
+  const [expandedYears, setExpandedYears] = React.useState<Set<string>>(new Set());
+
+  const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   const handleClearFilter = () => {
     onFilterChange(column.field, undefined);
@@ -184,28 +189,146 @@ export function DataGridFilterPopover<TData>({
             )}
           </div>
         );
-      case 'select':
-        const selectFilter = filterValue as FilterValue & { value: string };
-        const options = column.filterOptions || [];
+      case 'date-tree': {
+        const buckets = column.dateTreeBuckets || [];
+        const treeFilter = filterValue as DateTreeFilterValue | undefined;
+        const selected = new Set(treeFilter?.selected || []);
+
+        const yearKeys = (year: string, months: string[]) => months.map(m => `${year}-${m}`);
+        const yearState = (year: string, months: string[]): 'all' | 'none' | 'some' => {
+          const keys = yearKeys(year, months);
+          const checkedCount = keys.filter(k => selected.has(k)).length;
+          if (checkedCount === 0) return 'none';
+          return checkedCount === keys.length ? 'all' : 'some';
+        };
+        const commit = (next: Set<string>) => {
+          onFilterChange(column.field, next.size ? { type: 'date-tree', selected: Array.from(next) } : undefined);
+        };
+        const toggleYear = (year: string, months: string[]) => {
+          const keys = yearKeys(year, months);
+          const next = new Set(selected);
+          if (yearState(year, months) === 'all') {
+            keys.forEach(k => next.delete(k));
+          } else {
+            keys.forEach(k => next.add(k));
+          }
+          commit(next);
+        };
+        const toggleMonth = (year: string, month: string) => {
+          const key = `${year}-${month}`;
+          const next = new Set(selected);
+          if (next.has(key)) next.delete(key); else next.add(key);
+          commit(next);
+        };
+        const toggleExpand = (year: string) => {
+          setExpandedYears(prev => {
+            const next = new Set(prev);
+            if (next.has(year)) next.delete(year); else next.add(year);
+            return next;
+          });
+        };
+
         return (
-          <Select
-            value={selectFilter?.value || ''}
-            onValueChange={(val) =>
-              onFilterChange(column.field, { type: 'select', value: val })
-            }
-          >
-            <SelectTrigger className="w-full" aria-label={`${column.headerText} select filter`}>
-              <SelectValue placeholder={`Any ${column.headerText}`} />
-            </SelectTrigger>
-            <SelectContent>
-              {options.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="max-h-64 space-y-0.5 overflow-y-auto pr-1">
+            {buckets.length ? buckets.map(({ year, months }) => {
+              const state = yearState(year, months);
+              const isExpanded = expandedYears.has(year);
+              return (
+                <div key={year}>
+                  <div className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-muted">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(year)}
+                      className="rounded p-0.5 hover:bg-accent"
+                      aria-label={isExpanded ? `Collapse ${year}` : `Expand ${year}`}
+                    >
+                      {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                    </button>
+                    <label className="flex flex-1 items-center gap-2 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={state === 'all' ? true : state === 'some' ? 'indeterminate' : false}
+                        onCheckedChange={() => toggleYear(year, months)}
+                        aria-label={`Filter ${column.headerText} by ${year}`}
+                      />
+                      {year}
+                    </label>
+                  </div>
+                  {isExpanded && (
+                    <div className="ml-7 space-y-0.5">
+                      {months.map(month => (
+                        <label
+                          key={month}
+                          className="flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={selected.has(`${year}-${month}`)}
+                            onCheckedChange={() => toggleMonth(year, month)}
+                            aria-label={`Filter ${column.headerText} by ${MONTH_LABELS[Number(month) - 1]} ${year}`}
+                          />
+                          {MONTH_LABELS[Number(month) - 1]}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }) : (
+              <div className="text-sm text-muted-foreground px-1 py-1">No dates available</div>
+            )}
+          </div>
         );
+      }
+      case 'select': {
+        // Multi-select: searchable checkbox list. Selected values are kept as string[].
+        const selectFilter = filterValue as FilterValue & { value: string | string[] };
+        const selected = Array.isArray(selectFilter?.value)
+          ? selectFilter.value
+          : selectFilter?.value ? [String(selectFilter.value)] : [];
+        const options = column.filterOptions || [];
+        const query = optionSearch.trim().toLowerCase();
+        const visibleOptions = query
+          ? options.filter(o => String(o.label).toLowerCase().includes(query))
+          : options;
+        const toggleValue = (value: string, checked: boolean) => {
+          const next = checked
+            ? [...selected.filter(v => v !== value), value]
+            : selected.filter(v => v !== value);
+          onFilterChange(column.field, next.length ? { type: 'select', value: next } : undefined);
+        };
+        return (
+          <div className="space-y-2">
+            <Input
+              type="search"
+              placeholder={`Find ${column.headerText.toLowerCase()}...`}
+              value={optionSearch}
+              onChange={(e) => setOptionSearch(e.target.value)}
+              className="w-full h-8"
+              aria-label={`${column.headerText} option search`}
+            />
+            <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+              {visibleOptions.length ? visibleOptions.map((option) => {
+                const value = String(option.value);
+                return (
+                  <label
+                    key={value}
+                    className="flex items-start gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted cursor-pointer"
+                  >
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={selected.includes(value)}
+                      onCheckedChange={(checked) => toggleValue(value, !!checked)}
+                      aria-label={`Filter ${column.headerText} by ${option.label}`}
+                    />
+                    <span className="break-words min-w-0">{option.label}</span>
+                  </label>
+                );
+              }) : (
+                <div className="text-sm text-muted-foreground px-1 py-1">No matching options</div>
+              )}
+            </div>
+          </div>
+        );
+      }
       case 'boolean':
         const boolFilter = filterValue as FilterValue & { value?: boolean };
         let boolValueString = '';
@@ -241,7 +364,8 @@ export function DataGridFilterPopover<TData>({
     if (filterValue.type === 'text' && filterValue.value) return true;
     if (filterValue.type === 'number' && (typeof filterValue.value !== 'undefined' || (filterValue.operator === 'between' && typeof filterValue.value2 !== 'undefined'))) return true;
     if (filterValue.type === 'date' && filterValue.preset !== 'all') return true;
-    if (filterValue.type === 'select' && filterValue.value) return true;
+    if (filterValue.type === 'date-tree') return !!(filterValue.selected && filterValue.selected.length > 0);
+    if (filterValue.type === 'select' && (Array.isArray(filterValue.value) ? filterValue.value.length > 0 : !!filterValue.value)) return true;
     if (filterValue.type === 'boolean' && typeof filterValue.value !== 'undefined') return true;
     return false;
   };

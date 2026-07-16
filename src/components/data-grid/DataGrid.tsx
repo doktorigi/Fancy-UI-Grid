@@ -9,6 +9,7 @@ import type {
   HierarchicalData,
   ProcessedRow,
   DateFilterValue,
+  DateTreeFilterValue,
   NumberFilterValue,
 } from '@/types/data-grid';
 import {
@@ -43,6 +44,13 @@ import { startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, isV
 const DEFAULT_COL_WIDTH = 150; // px
 const LOCAL_STORAGE_KEY = 'ngxMatDataGridState';
 
+// Extracts { year, month } straight from a 'YYYY-MM-...' string without going through
+// Date parsing, so local-timezone shifting can never move a value into the wrong bucket.
+function dateTreeKeyOf(value: any): { year: string; month: string } | null {
+  const match = String(value ?? '').match(/^(\d{4})-(\d{2})/);
+  return match ? { year: match[1], month: match[2] } : null;
+}
+
 export function DataGrid<TData extends HierarchicalData<TData>>({
   data: initialData,
   columnDefs: initialColumnDefs,
@@ -57,6 +65,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   storageKey = LOCAL_STORAGE_KEY,
   virtualized = false,
   rowHeight = 44,
+  getRowStyle,
+  onFilteredDataChange,
+  globalFilterFields,
+  globalFilterPlaceholder = 'Search all columns...',
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -234,6 +246,19 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     return Array.from(uniqueValues).sort();
   }, [initialData, isTreeData]);
 
+  const getDateTreeBuckets = React.useCallback((field: keyof TData & string) => {
+    const monthsByYear = new Map<string, Set<string>>();
+    (initialData || []).forEach(row => {
+      const parts = dateTreeKeyOf(getCellValue({ originalRow: row } as ProcessedRow<TData>, field));
+      if (!parts) return;
+      if (!monthsByYear.has(parts.year)) monthsByYear.set(parts.year, new Set());
+      monthsByYear.get(parts.year)!.add(parts.month);
+    });
+    return Array.from(monthsByYear.entries())
+      .sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([year, months]) => ({ year, months: Array.from(months).sort() }));
+  }, [initialData]);
+
   const processedColumnDefs = React.useMemo(() => {
     return initialColumnDefs.map(colDef => {
       if (colDef.filterable && colDef.filterType === 'select' && !colDef.filterOptions) {
@@ -242,9 +267,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           filterOptions: getUniqueColumnValues(colDef.field).map(val => ({ label: val, value: val }))
         };
       }
+      if (colDef.filterable && colDef.filterType === 'date-tree' && !colDef.dateTreeBuckets) {
+        return { ...colDef, dateTreeBuckets: getDateTreeBuckets(colDef.field) };
+      }
       return colDef;
     });
-  }, [initialColumnDefs, getUniqueColumnValues]);
+  }, [initialColumnDefs, getUniqueColumnValues, getDateTreeBuckets]);
 
   const colDefsMap = React.useMemo(() => new Map(processedColumnDefs.map(col => [col.field, col])), [processedColumnDefs]);
 
@@ -304,10 +332,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const handleColumnFilterChange = (field: keyof TData & string, value?: FilterValue) => {
     setState((prevState) => {
       const newColumnFilters = { ...prevState.columnFilters };
-      if (value === undefined || 
-          (value.type === 'text' && value.value === '') || 
-          (value.type === 'number' && value.value === undefined && (value.operator !== 'between' || value.value2 === undefined)) || 
-          (value.type === 'date' && value.preset === 'all') || 
+      if (value === undefined ||
+          (value.type === 'text' && value.value === '') ||
+          (value.type === 'number' && value.value === undefined && (value.operator !== 'between' || value.value2 === undefined)) ||
+          (value.type === 'date' && value.preset === 'all') ||
+          (value.type === 'date-tree' && (!value.selected || value.selected.length === 0)) ||
+          (value.type === 'select' && (Array.isArray(value.value) ? value.value.length === 0 : value.value === '')) ||
           (value.type === 'boolean' && value.value === undefined)) {
         delete newColumnFilters[field];
       } else {
@@ -562,6 +592,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       const lowerGlobalFilter = state.globalFilter.toLowerCase();
       dataToFilter = dataToFilter.filter((row) =>
         processedColumnDefs.some((col) => {
+          if (globalFilterFields && globalFilterFields.length > 0 && !globalFilterFields.includes(col.field)) {
+            return false;
+          }
           if (state.visibleColumns.includes(col.field)) {
             const cellValue = getCellValue(row, col.field);
             return String(cellValue).toLowerCase().includes(lowerGlobalFilter);
@@ -581,6 +614,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         if (cellValue === undefined || cellValue === null) {
             if (filter.type === 'boolean' && filter.value === undefined) return true; // 'Any' for boolean
             if (filter.type === 'date' && (filter as DateFilterValue).preset === 'all') return true; // 'Any Date' for date
+            if (filter.type === 'date-tree' && !(filter as DateTreeFilterValue).selected?.length) return true; // no tree selection => show all
             return false;
         }
         switch (filter.type) {
@@ -663,7 +697,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               }
               return true;
             }
+          case 'date-tree': {
+            const treeFilter = filter as DateTreeFilterValue;
+            if (!treeFilter.selected || treeFilter.selected.length === 0) return true;
+            const parts = dateTreeKeyOf(cellValue);
+            if (!parts) return false;
+            return treeFilter.selected.includes(`${parts.year}-${parts.month}`);
+          }
           case 'select':
+            if (Array.isArray(filter.value)) {
+              return filter.value.length === 0 || filter.value.includes(String(cellValue));
+            }
             return String(cellValue) === filter.value;
           case 'boolean':
             if (filter.value === undefined) return true;
@@ -674,7 +718,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       });
     });
     return dataToFilter;
-  }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns]);
+  }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, globalFilterFields]);
 
   const sortedData = React.useMemo(() => {
     const dataToSort = [...filteredData];
@@ -737,6 +781,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
     return dataToSort;
   }, [filteredData, state.sortConfig, state.groupedBy, colDefsMap, isTreeData]);
+
+  // Report the filtered+sorted rows to the host (for external summaries/KPIs).
+  // The callback is kept in a ref so an unstable function identity doesn't re-fire the effect.
+  const onFilteredDataChangeRef = React.useRef(onFilteredDataChange);
+  onFilteredDataChangeRef.current = onFilteredDataChange;
+  React.useEffect(() => {
+    onFilteredDataChangeRef.current?.(
+      sortedData.filter(r => !r.isGroupHeader).map(r => r.originalRow)
+    );
+  }, [sortedData]);
 
   const dataWithGroupHeaders = React.useMemo(() => {
     if (state.groupedBy.length === 0 || isTreeData) { 
@@ -1155,7 +1209,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       )}
       <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-2">
         <Input
-          placeholder="Search all columns..."
+          placeholder={globalFilterPlaceholder}
           value={state.globalFilter}
           onChange={handleGlobalFilterChange}
           className="max-w-xs h-9"
@@ -1326,18 +1380,26 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                     </TableRow>
                   )
                 }
+                const rowStyle = getRowStyle?.(row.originalRow);
+                // Pinned cells paint an opaque bg-card; carry a row background onto them
+                // so the row color is not masked while horizontally scrolling.
+                const pinnedCellBg = rowStyle?.backgroundColor
+                  ? { backgroundColor: rowStyle.backgroundColor }
+                  : undefined;
                 return (
                   <TableRow
                     key={row.id}
                     data-state={state.selectedRows.has(row.id) ? "selected" : ""}
                     className={cn(state.selectedRows.has(row.id) && "bg-muted/50")}
+                    style={rowStyle}
                   >
                     {enableRowSelection && (
                       <TableCell
                         className="px-3 py-2 sticky-body-cell"
                         style={{
                           left: 0,
-                          zIndex: 11 
+                          zIndex: 11,
+                          ...pinnedCellBg
                         }}
                       >
                         <Checkbox
@@ -1354,8 +1416,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                        let stickyStyle: React.CSSProperties = {};
                         if (isLeftPinned) {
                           stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
+                          if (pinnedCellBg) Object.assign(stickyStyle, pinnedCellBg);
                         } else if (isRightPinned) {
                           stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
+                          if (pinnedCellBg) Object.assign(stickyStyle, pinnedCellBg);
                         }
                         const isFocused = state.focusedCell?.rowId === row.id && state.focusedCell?.colField === colDef.field;
 

@@ -18,6 +18,12 @@ The `DataGrid` component is highly configurable through its props.
 | `treeColumn`         | `keyof TData & string`                                               | First col field| Specifies which column should display tree expander controls and indentation. Defaults to the `field` of the first column definition. |
 | `enableGroupingPanel`| `boolean`                                                            | `false`        | If true, displays the column grouping panel above the grid.                                                                             |
 | `storageKey`         | `string`                                                             | `'ngxMatDataGridState'` | The `localStorage` key used for state persistence. Set a unique key per grid instance so multiple grids don't overwrite each other's saved state. |
+| `virtualized`        | `boolean`                                                            | `false`        | If true, pagination is replaced with windowed (virtualized) rendering inside a scrollable viewport — suitable for tens of thousands of rows.   |
+| `rowHeight`          | `number`                                                             | `44`           | Fixed row height in px used by the virtualization window math. Only used when `virtualized` is true.                                          |
+| `getRowStyle`        | `(row: TData) => React.CSSProperties \| undefined`                   | `undefined`    | Returns inline styles for a data row (e.g. a status background color). A returned `backgroundColor` is also applied to that row's pinned cells so the color isn't masked during horizontal scroll. |
+| `onFilteredDataChange` | `(rows: TData[]) => void`                                          | `undefined`    | Fires with the filtered + sorted data rows (group headers excluded) whenever they change — useful for driving external KPIs/summaries.         |
+| `globalFilterFields` | `(keyof TData & string)[]`                                           | `undefined`    | Restricts the global search box to these fields. Omit to search all visible columns.                                                          |
+| `globalFilterPlaceholder` | `string`                                                        | `'Search all columns...'` | Placeholder text for the global search box.                                                                                          |
 
 ### `TData` Type Constraint
 
@@ -41,8 +47,9 @@ Each object in the `columnDefs` prop array defines a column in the grid.
 | `headerText`        | `string`                                  | - (Required)| The text to display in the column header.                                                                                                     |
 | `sortable`          | `boolean`                                 | `false`     | If true, allows users to sort the grid by this column by clicking the header.                                                                 |
 | `filterable`        | `boolean`                                 | `false`     | If true, enables filtering UI for this column.                                                                                                |
-| `filterType`        | `'text' \| 'number' \| 'date' \| 'select' \| 'boolean'` | `undefined` | Specifies the type of filter UI to render if `filterable` is true.                                                                  |
+| `filterType`        | `'text' \| 'number' \| 'date' \| 'date-tree' \| 'select' \| 'boolean'` | `undefined` | Specifies the type of filter UI to render if `filterable` is true.                                                                  |
 | `filterOptions`     | `{ label: string, value: any }[]`         | `undefined` | An array of options for `select` type filters. If not provided for a 'select' filter, unique values from the column will be used.          |
+| `dateTreeBuckets`   | `{ year: string, months: string[] }[]`    | `undefined` | Year/month buckets for `date-tree` filters. Auto-derived from the column's data (expects `YYYY-MM-...` strings) when not supplied.          |
 | `hideable`          | `boolean`                                 | `true`      | If true (default), this column can be hidden via the Column Visibility Toggle. Set to `false` to prevent hiding.                           |
 | `editable`          | `boolean`                                 | `false`     | If true, cells in this column can be edited by the user (double-click or Enter/F2). Requires `onCellEdit` prop on `DataGrid`.            |
 | `pinned`            | `'left' \| 'right' \| null`               | `null`      | Pins the column to the specified side. Pinned columns remain visible during horizontal scrolling.                                         |
@@ -72,9 +79,15 @@ Each object in the `columnDefs` prop array defines a column in the grid.
 *   Offers predefined ranges: "Any Date", "Today", "Yesterday", "Last 7 Days", "Last 30 Days", "This Month", "Last Month".
 *   Supports a "Custom Range" option with start and end date pickers.
 
+### `date-tree`
+*   Hierarchical year → month checkbox tree derived from the column's `YYYY-MM-...` values.
+*   Checking a year selects all of its months; an indeterminate state shows partial selections.
+*   Buckets are matched on the raw `YYYY-MM` string prefix, so timezone shifts can never move a value into the wrong bucket.
+
 ### `select`
-*   Dropdown select for filtering by specific values.
+*   Searchable multi-select checkbox list for filtering by specific values.
 *   Populated by `filterOptions` or unique values from the column.
+*   A type-to-filter box narrows the visible options; any number of values can be checked (a row passes if it matches any checked value).
 
 ### `boolean`
 *   Dropdown select with "Any", "Yes", "No" options.

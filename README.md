@@ -10,8 +10,10 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Column Sorting** — click column headers to sort data.
 * **Row Selection** — checkboxes per row, plus "select all on page".
 * **Column Resizing** — drag header borders to resize columns.
-* **Global Search (Quick Filter)** — filter across all visible columns.
-* **Per-Column Filtering** — Text, Numeric (`=`, `!=`, `<`, `<=`, `>`, `>=`, `between`), Date (presets like "Today", "Last 7 days", plus custom ranges), Multi-Select, and Boolean filter types in a popover UI.
+* **Global Search (Quick Filter)** — filter across all visible columns, or restrict it to specific fields with `globalFilterFields`.
+* **Per-Column Filtering** — Text, Numeric (`=`, `!=`, `<`, `<=`, `>`, `>=`, `between`), Date (presets like "Today", "Last 7 days", plus custom ranges), searchable Multi-Select checkbox lists, Date Tree (year → month checkboxes), and Boolean filter types in a popover UI.
+* **Row Styling** — `getRowStyle` callback returns inline styles per data row (e.g. status-colored rows); the background carries onto pinned cells so it isn't masked while scrolling.
+* **Filtered Data Callback** — `onFilteredDataChange` fires with the filtered + sorted rows whenever they change, for external KPIs/summaries.
 * **Clear All Filters** — one-click button showing the active filter count.
 * **Cell Editing** — double-click or Enter/F2 on editable cells.
 * **Custom Cell Renderers** — supply a `cellRenderer` per column to render anything: formatted currency, badges, action buttons, etc.
@@ -19,6 +21,7 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Column Reordering** — drag and drop unpinned column headers.
 * **Column Visibility Toggle** — show/hide columns from a dropdown.
 * **Pagination** — first/prev/next/last controls with selectable page size.
+* **Row Virtualization** — set `virtualized` and pagination is replaced by windowed rendering in a scrollable viewport; tens of thousands of rows scroll smoothly.
 * **Row Grouping** — drag a column header to the grouping panel to group rows, with expand/collapse.
 * **Group Aggregations** — declare `aggregate: 'sum' | 'avg' | 'min' | 'max' | 'count'` on a column and the group header shows the computed value.
 * **Tree Data** — render hierarchical parent/child data with expand/collapse and indentation.
