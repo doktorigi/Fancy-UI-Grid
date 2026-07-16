@@ -36,11 +36,37 @@ const formatCurrency = (value: number | undefined) => {
 
 export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackToSearch }) => {
   const [resultsData, setResultsData] = useState<ResultPolicy[]>(initialResultsData.map(d => ({...d, premium: d.currentPremium, raterVersion})));
-  
-  const summaryTotalPolicies = resultsData.length;
-  const summarySourcePremium = resultsData.reduce((sum, row) => sum + row.currentPremium, 0);
-  const summaryNewPremium = resultsData.reduce((sum, row) => sum + row.newPremium, 0);
-  const batchId = "2593421"; 
+  const [virtualizedDemo, setVirtualizedDemo] = useState(false);
+
+  // Deterministic synthetic dataset to demo virtualized scrolling over many rows.
+  const gridData = useMemo<ResultPolicy[]>(() => {
+    if (!virtualizedDemo) return resultsData;
+    const companies = ['ABC Insurance', 'XYZ Insurance', 'DEF Insurance', 'GHI Insurance'];
+    const programs = ['Target Umbrella', 'CPL', 'Umbrella'];
+    const states = ['CA', 'FL', 'NY', 'TX', 'PA', 'OH'];
+    return Array.from({ length: 5000 }, (_, i) => {
+      const currentPremium = 800 + ((i * 137) % 2200);
+      const difference = Math.round(currentPremium * (((i * 61) % 21) - 10)) / 100;
+      return {
+        id: i + 1,
+        company: companies[i % companies.length],
+        program: programs[i % programs.length],
+        policyNo: String(100000 + i),
+        state: states[i % states.length],
+        currentPremium,
+        newPremium: currentPremium + difference,
+        difference,
+        premium: currentPremium,
+        policyEff: `2025-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}`,
+        raterVersion,
+      };
+    });
+  }, [virtualizedDemo, resultsData, raterVersion]);
+
+  const summaryTotalPolicies = gridData.length;
+  const summarySourcePremium = gridData.reduce((sum, row) => sum + row.currentPremium, 0);
+  const summaryNewPremium = gridData.reduce((sum, row) => sum + row.newPremium, 0);
+  const batchId = "2593421";
 
   const handleExcelRaterClick = (row: ResultPolicy) => {
     alert(`Excel Rater for Policy ${row.policyNo}. This would call the excel download from coherent with the rater inputs and outputs.`);
@@ -56,8 +82,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       headerText: 'State', 
       sortable: true, 
       filterable: true, 
-      filterType: 'select', 
-      filterOptions: [...new Set(resultsData.map(r => r.state))].map(s => ({label: s, value: s})),
+      filterType: 'select',
+      filterOptions: [...new Set(gridData.map(r => r.state))].map(s => ({label: s, value: s})),
       defaultWidth: '100px',
     },
     {
@@ -114,7 +140,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
         </Button>
       ),
     },
-  ], [resultsData]); // Rater version passed to resultsData map, so it's a dependency
+  ], [gridData]); // State filter options derive from the active dataset
 
 
   return (
@@ -163,14 +189,46 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           </div>
         </div>
         
+        <label className="mb-3 flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={virtualizedDemo}
+            onChange={(e) => setVirtualizedDemo(e.target.checked)}
+            className="h-4 w-4"
+          />
+          Virtualized demo — replace the 10 sample rows with 5,000 generated rows and windowed scrolling
+        </label>
         <DataGrid<ResultPolicy>
-          data={resultsData}
+          data={gridData}
           columnDefs={resultsGridColumnDefs}
           defaultPageSize={5}
           pageSizeOptions={[5, 10, 20, 50]}
           enableRowSelection={true}
           enableGroupingPanel={true}
+          virtualized={virtualizedDemo}
           storageKey="repricingResultsGrid"
+          detailRenderer={(row) => (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <h4 className="mb-2 font-semibold">Policy {row.policyNo}</h4>
+                <p className="text-sm text-muted-foreground">{row.company} — {row.program} ({row.state})</p>
+                <p className="text-sm text-muted-foreground">Effective {row.policyEff} · Rater v{row.raterVersion}</p>
+              </div>
+              <div>
+                <h4 className="mb-2 font-semibold">Repricing</h4>
+                <p className="text-sm">Current premium: {formatCurrency(row.currentPremium)}</p>
+                <p className="text-sm">New premium: {formatCurrency(row.newPremium)}</p>
+                <p className="text-sm">Difference: {formatCurrency(row.difference)}</p>
+              </div>
+              <div>
+                <h4 className="mb-2 font-semibold">Master-Detail</h4>
+                <p className="text-sm text-muted-foreground">
+                  This panel comes from the grid&apos;s <code>detailRenderer</code> prop — render
+                  anything here: charts, forms, even a nested grid.
+                </p>
+              </div>
+            </div>
+          )}
         />
       </CardContent>
     </Card>

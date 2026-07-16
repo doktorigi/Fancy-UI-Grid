@@ -128,6 +128,11 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   storageKey?: string; // localStorage key for state persistence; set a unique key per grid instance
   virtualized?: boolean;
   rowHeight?: number;
+  virtualizedMaxHeight?: number; // Height (px) of the scroll viewport when virtualized. Default 500.
+  detailRenderer?: (row: TData) => React.ReactNode; // Enables master-detail: an expander column + a full-width detail panel under each expanded row
+  detailRowHeight?: number; // Fixed detail panel height (px) used by the virtualization window math. Default 300. Panels auto-size when not virtualized.
+  enableRangeSelection?: boolean; // Excel-style cell range selection via drag / Shift+click / Shift+arrows. Default true.
+  enableContextMenu?: boolean; // Right-click context menu with copy/pin/hide/export actions. Default true.
   getRowStyle?: (row: TData) => React.CSSProperties | undefined; // Inline style for data rows (e.g. status background)
   onFilteredDataChange?: (rows: TData[]) => void; // Fires with the filtered+sorted rows whenever they change
   globalFilterFields?: (keyof TData & string)[]; // Restrict the global search box to these fields; omit to search all visible columns

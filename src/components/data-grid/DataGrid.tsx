@@ -65,6 +65,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   storageKey = LOCAL_STORAGE_KEY,
   virtualized = false,
   rowHeight = 44,
+  virtualizedMaxHeight = 500,
+  detailRenderer,
+  detailRowHeight = 300,
+  enableRangeSelection = true,
+  enableContextMenu = true,
   getRowStyle,
   onFilteredDataChange,
   globalFilterFields,
@@ -117,10 +122,22 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       pinnedColumns: { left: initialPinnedLeftFromDefs, right: initialPinnedRightFromDefs },
       expandedRows: new Set<string | number>(),
       focusedCell: null,
-      groupedBy: [], 
+      groupedBy: [],
       expandedGroups: new Set<string>(),
     };
   });
+
+  const masterDetail = !!detailRenderer;
+  // Master-detail expansion is deliberately not persisted to localStorage — detail
+  // panels are transient drill-downs, not layout configuration.
+  const [expandedDetails, setExpandedDetails] = React.useState<Set<string | number>>(new Set());
+
+  // Range selection: indices are positions in the current display list (paginatedData)
+  // and in orderedVisibleColumnDefs, so ranges follow what the user actually sees.
+  const [rangeAnchor, setRangeAnchor] = React.useState<{ rowIndex: number; colIndex: number } | null>(null);
+  const [rangeEnd, setRangeEnd] = React.useState<{ rowIndex: number; colIndex: number } | null>(null);
+  const [isDraggingRange, setIsDraggingRange] = React.useState(false);
+  const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number; rowId: string | number; colField: keyof TData & string } | null>(null);
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -399,6 +416,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         newExpandedRows.add(rowId);
       }
       return { ...prevState, expandedRows: newExpandedRows };
+    });
+  };
+
+  const handleToggleDetail = (rowId: string | number) => {
+    setExpandedDetails(prev => {
+      const next = new Set(prev);
+      if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
     });
   };
 
@@ -877,19 +906,59 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   const totalPages = Math.ceil(dataToPaginate.length / state.pageSize);
 
-  const { startIndex, endIndex, visibleRows } = React.useMemo(() => {
-    if (!virtualized) {
-      return { startIndex: 0, endIndex: paginatedData.length, visibleRows: paginatedData };
+  // The display list interleaves a synthetic detail entry after each expanded master
+  // row. dataIndex always points back at the row's position in paginatedData so range
+  // selection and keyboard navigation are unaffected by open detail panels.
+  type DisplayRow = { row: ProcessedRow<TData>; isDetail: boolean; dataIndex: number };
+  const displayRows = React.useMemo<DisplayRow[]>(() => {
+    if (!masterDetail || expandedDetails.size === 0) {
+      return paginatedData.map((row, i) => ({ row, isDetail: false, dataIndex: i }));
+    }
+    const out: DisplayRow[] = [];
+    paginatedData.forEach((row, i) => {
+      out.push({ row, isDetail: false, dataIndex: i });
+      if (!row.isGroupHeader && expandedDetails.has(row.id)) {
+        out.push({ row, isDetail: true, dataIndex: i });
+      }
+    });
+    return out;
+  }, [paginatedData, masterDetail, expandedDetails]);
+
+  // Prefix-sum row offsets make the window math exact even though detail panels
+  // are taller than data rows. offsets[i] is the top of display row i.
+  const rowOffsets = React.useMemo(() => {
+    if (!virtualized) return null;
+    const offsets = new Array<number>(displayRows.length + 1);
+    offsets[0] = 0;
+    for (let i = 0; i < displayRows.length; i++) {
+      offsets[i + 1] = offsets[i] + (displayRows[i].isDetail ? detailRowHeight : rowHeight);
+    }
+    return offsets;
+  }, [virtualized, displayRows, rowHeight, detailRowHeight]);
+
+  const { visibleDisplayRows, topSpacer, bottomSpacer } = React.useMemo(() => {
+    if (!virtualized || !rowOffsets) {
+      return { visibleDisplayRows: displayRows, topSpacer: 0, bottomSpacer: 0 };
+    }
+    const viewportHeight = scrollContainerRef.current?.clientHeight || virtualizedMaxHeight;
+    // Binary search for the first row whose bottom edge is below the viewport top.
+    let lo = 0;
+    let hi = displayRows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rowOffsets[mid + 1] > scrollTop) hi = mid; else lo = mid + 1;
     }
     const buffer = 5;
-    const sIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
-    const eIdx = Math.min(paginatedData.length, Math.ceil((scrollTop + (scrollContainerRef.current?.clientHeight || 500)) / rowHeight) + buffer);
+    let eIdx = lo;
+    while (eIdx < displayRows.length && rowOffsets[eIdx] < scrollTop + viewportHeight) eIdx++;
+    const sIdx = Math.max(0, lo - buffer);
+    eIdx = Math.min(displayRows.length, eIdx + buffer);
     return {
-      startIndex: sIdx,
-      endIndex: eIdx,
-      visibleRows: paginatedData.slice(sIdx, eIdx)
+      visibleDisplayRows: displayRows.slice(sIdx, eIdx),
+      topSpacer: rowOffsets[sIdx],
+      bottomSpacer: rowOffsets[displayRows.length] - rowOffsets[eIdx],
     };
-  }, [virtualized, paginatedData, scrollTop, rowHeight]);
+  }, [virtualized, rowOffsets, displayRows, scrollTop, virtualizedMaxHeight]);
 
 
   const orderedVisibleColumnDefs = React.useMemo(() => {
@@ -917,7 +986,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const left: Record<string, number> = {};
     let currentLeftOffset = 0;
     if (enableRowSelection) {
-        currentLeftOffset += 50; 
+        currentLeftOffset += 50;
+    }
+    if (masterDetail) {
+        currentLeftOffset += 40; // detail expander column
     }
     state.pinnedColumns.left.forEach(field => {
       if (state.visibleColumns.includes(field)) {
@@ -935,30 +1007,169 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       }
     });
     return { left, right };
-  }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection]);
+  }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection, masterDetail]);
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.filter(r => !r.isGroupHeader).every(row => state.selectedRows.has(row.id));
+
+  const rangeBounds = React.useMemo(() => {
+    if (!rangeAnchor || !rangeEnd) return null;
+    return {
+      top: Math.min(rangeAnchor.rowIndex, rangeEnd.rowIndex),
+      bottom: Math.max(rangeAnchor.rowIndex, rangeEnd.rowIndex),
+      left: Math.min(rangeAnchor.colIndex, rangeEnd.colIndex),
+      right: Math.max(rangeAnchor.colIndex, rangeEnd.colIndex),
+    };
+  }, [rangeAnchor, rangeEnd]);
+
+  const isCellInRange = (dataIndex: number, colIndex: number): boolean =>
+    !!rangeBounds &&
+    dataIndex >= rangeBounds.top && dataIndex <= rangeBounds.bottom &&
+    colIndex >= rangeBounds.left && colIndex <= rangeBounds.right;
+
+  // Any change to the underlying display list shifts row indices, so an existing
+  // range would silently point at different cells — drop it instead.
+  React.useEffect(() => {
+    setRangeAnchor(null);
+    setRangeEnd(null);
+  }, [paginatedData]);
+
+  const handleCellMouseDown = (e: React.MouseEvent, dataIndex: number, colIndex: number) => {
+    if (!enableRangeSelection || e.button !== 0 || state.editingCell) return;
+    // Let buttons, links, and inputs inside cells behave normally.
+    if ((e.target as HTMLElement).closest('button, a, input, select, textarea, [role="checkbox"]')) return;
+    e.preventDefault();
+    if (e.shiftKey && rangeAnchor) {
+      setRangeEnd({ rowIndex: dataIndex, colIndex });
+    } else {
+      // The anchor cell becomes the active cell. Set focus here rather than relying
+      // on the click event — a drag that ends on another cell never fires click.
+      const row = paginatedData[dataIndex];
+      const colDef = orderedVisibleColumnDefs[colIndex];
+      if (row && !row.isGroupHeader && colDef) {
+        setState(prev => ({ ...prev, focusedCell: { rowId: row.id, colField: colDef.field } }));
+      }
+      setRangeAnchor({ rowIndex: dataIndex, colIndex });
+      setRangeEnd({ rowIndex: dataIndex, colIndex });
+      setIsDraggingRange(true);
+    }
+  };
+
+  const handleCellMouseEnter = (dataIndex: number, colIndex: number) => {
+    if (isDraggingRange) {
+      setRangeEnd({ rowIndex: dataIndex, colIndex });
+    }
+  };
+
+  React.useEffect(() => {
+    if (!isDraggingRange) return;
+    const onMouseUp = () => setIsDraggingRange(false);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => document.removeEventListener('mouseup', onMouseUp);
+  }, [isDraggingRange]);
+
+  // Copy precedence: a multi-cell range wins, then checkbox-selected rows (always
+  // with a header row, matching pre-range behavior), then the focused cell.
+  const buildCopyText = (withHeaders: boolean): string => {
+    const isMultiCellRange = !!rangeBounds && (rangeBounds.bottom > rangeBounds.top || rangeBounds.right > rangeBounds.left);
+    if (rangeBounds && (isMultiCellRange || withHeaders)) {
+      const rangeCols = orderedVisibleColumnDefs.slice(rangeBounds.left, rangeBounds.right + 1);
+      const lines: string[] = [];
+      if (withHeaders) lines.push(rangeCols.map(c => c.headerText).join('\t'));
+      for (let r = rangeBounds.top; r <= rangeBounds.bottom; r++) {
+        const row = paginatedData[r];
+        if (!row || row.isGroupHeader) continue;
+        lines.push(rangeCols.map(c => String(getCellValue(row, c.field) ?? '')).join('\t'));
+      }
+      return lines.join('\n');
+    }
+    const selectedProcessedRows = sortedData.filter(r => !r.isGroupHeader && state.selectedRows.has(r.id));
+    if (selectedProcessedRows.length > 0) {
+      const header = orderedVisibleColumnDefs.map(c => c.headerText).join('\t');
+      const rows = selectedProcessedRows.map(r =>
+        orderedVisibleColumnDefs.map(c => String(getCellValue(r, c.field) ?? '')).join('\t')
+      );
+      return [header, ...rows].join('\n');
+    }
+    if (state.focusedCell) {
+      const focusedRow = paginatedData.find(r => r.id === state.focusedCell!.rowId);
+      if (focusedRow) return String(getCellValue(focusedRow, state.focusedCell.colField) ?? '');
+    }
+    return '';
+  };
+
+  const copySelectionToClipboard = (withHeaders: boolean) => {
+    const text = buildCopyText(withHeaders);
+    if (text) navigator.clipboard?.writeText(text);
+  };
+
+  const handleCellContextMenu = (e: React.MouseEvent, dataIndex: number, colIndex: number, rowId: string | number, colField: keyof TData & string) => {
+    if (!enableContextMenu) return;
+    e.preventDefault();
+    setState(prev => ({ ...prev, focusedCell: { rowId, colField } }));
+    if (enableRangeSelection && !isCellInRange(dataIndex, colIndex)) {
+      setRangeAnchor({ rowIndex: dataIndex, colIndex });
+      setRangeEnd({ rowIndex: dataIndex, colIndex });
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, rowId, colField });
+  };
+
+  const contextMenuRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!contextMenu) return;
+    // Note: stopPropagation from inside the menu can't be trusted here — with React
+    // roots hydrated at `document` (Next.js App Router), React's delegated handler and
+    // this listener share the same node, and stopPropagation doesn't silence same-node
+    // listeners. Check containment instead.
+    const closeUnlessInside = (e: Event) => {
+      if (contextMenuRef.current?.contains(e.target as Node)) return;
+      setContextMenu(null);
+    };
+    const close = () => setContextMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', closeUnlessInside);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('scroll', closeUnlessInside, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', closeUnlessInside);
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('scroll', closeUnlessInside, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [contextMenu]);
 
 
   const handleGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !state.editingCell) {
-      const selectedProcessedRows = sortedData.filter(r => !r.isGroupHeader && state.selectedRows.has(r.id));
-      let textToCopy = '';
-      if (selectedProcessedRows.length > 0) {
-        const header = orderedVisibleColumnDefs.map(c => c.headerText).join('\t');
-        const rows = selectedProcessedRows.map(r =>
-          orderedVisibleColumnDefs.map(c => String(getCellValue(r, c.field) ?? '')).join('\t')
-        );
-        textToCopy = [header, ...rows].join('\n');
-      } else if (state.focusedCell) {
-        const focusedRow = paginatedData.find(r => r.id === state.focusedCell!.rowId);
-        if (focusedRow) textToCopy = String(getCellValue(focusedRow, state.focusedCell.colField) ?? '');
-      }
+      const textToCopy = buildCopyText(false);
       if (textToCopy) {
         e.preventDefault();
         navigator.clipboard?.writeText(textToCopy);
       }
       return;
+    }
+
+    if (enableRangeSelection && e.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && state.focusedCell && !state.editingCell) {
+      const focusedRowIndex = paginatedData.findIndex(r => r.id === state.focusedCell!.rowId);
+      const focusedColIndex = orderedVisibleColumnDefs.findIndex(c => c.field === state.focusedCell!.colField);
+      if (focusedRowIndex >= 0 && focusedColIndex >= 0) {
+        e.preventDefault();
+        const anchor = rangeAnchor ?? { rowIndex: focusedRowIndex, colIndex: focusedColIndex };
+        const end = rangeEnd ?? anchor;
+        let { rowIndex, colIndex } = end;
+        if (e.key === 'ArrowUp') rowIndex = Math.max(0, rowIndex - 1);
+        if (e.key === 'ArrowDown') rowIndex = Math.min(paginatedData.length - 1, rowIndex + 1);
+        if (e.key === 'ArrowLeft') colIndex = Math.max(0, colIndex - 1);
+        if (e.key === 'ArrowRight') colIndex = Math.min(orderedVisibleColumnDefs.length - 1, colIndex + 1);
+        setRangeAnchor(anchor);
+        setRangeEnd({ rowIndex, colIndex });
+        return;
+      }
+    }
+
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && !e.shiftKey && (rangeAnchor || rangeEnd)) {
+      setRangeAnchor(null);
+      setRangeEnd(null);
     }
 
     if (!state.focusedCell && !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
@@ -1050,7 +1261,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         }
         break;
       case 'Escape':
-        if (state.focusedCell && !state.editingCell) {
+        if (rangeAnchor || rangeEnd || contextMenu) {
+          e.preventDefault();
+          setRangeAnchor(null);
+          setRangeEnd(null);
+          setContextMenu(null);
         }
         break;
       default:
@@ -1058,10 +1273,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     }
 
     if ((nextRowId !== undefined && nextRowId !== focusedCell?.rowId) || (nextColField !== undefined && nextColField !== focusedCell?.colField)) {
-        const finalRowId = nextRowId !== undefined ? nextRowId : focusedCell!.rowId;
-        const finalColField = nextColField !== undefined ? nextColField : focusedCell!.colField;
-        setState(prev => ({ ...prev, focusedCell: { rowId: finalRowId, colField: finalColField } }));
-    } else if (!focusedCell && nextRowId !== undefined && nextColField !== undefined) { 
+        const finalRowId = nextRowId !== undefined ? nextRowId : focusedCell?.rowId;
+        const finalColField = nextColField !== undefined ? nextColField : focusedCell?.colField;
+        if (finalRowId !== undefined && finalColField !== undefined) {
+          setState(prev => ({ ...prev, focusedCell: { rowId: finalRowId, colField: finalColField } }));
+        }
+    } else if (!focusedCell && nextRowId !== undefined && nextColField !== undefined) {
         setState(prev => ({ ...prev, focusedCell: { rowId: nextRowId!, colField: nextColField! } }));
     }
   };
@@ -1154,6 +1371,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   };
 
   const checkboxColumnWidth = '50px';
+  const detailColumnWidth = '40px';
+  const detailColumnLeft = enableRowSelection ? 50 : 0;
+  const totalColSpan = orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0) + (masterDetail ? 1 : 0);
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
 
   const computeAggregate = (items: ProcessedRow<TData>[], col: ColumnDefinition<TData>): string => {
@@ -1245,13 +1465,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           </DropdownMenu>
         </div>
       </div>
-      <div 
+      <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
         className={cn(
           "overflow-x-auto relative",
-          virtualized && "overflow-y-auto max-h-[500px]"
+          virtualized && "overflow-y-auto",
+          isDraggingRange && "select-none"
         )}
+        style={virtualized ? { maxHeight: `${virtualizedMaxHeight}px` } : undefined}
       >
         <Table>
           <TableHeader>
@@ -1275,6 +1497,18 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                     />
                   </div>
                 </TableHead>
+              )}
+              {masterDetail && (
+                <TableHead
+                  className="px-0 py-0 sticky-header-cell top-0"
+                  style={{
+                    width: detailColumnWidth,
+                    minWidth: detailColumnWidth,
+                    left: detailColumnLeft,
+                    zIndex: 21
+                  }}
+                  aria-label="Detail expander column"
+                />
               )}
               {orderedVisibleColumnDefs.map((colDef) => {
                 const isDraggableForReorder = colDef.reorderable !== false && !state.pinnedColumns.left.includes(colDef.field) && !state.pinnedColumns.right.includes(colDef.field);
@@ -1336,24 +1570,39 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {virtualized && startIndex > 0 && (
-              <TableRow style={{ height: `${startIndex * rowHeight}px` }} className="hover:bg-transparent">
-                <TableCell 
-                  colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
-                  className="p-0 border-0" 
-                  style={{ height: `${startIndex * rowHeight}px` }}
+            {virtualized && topSpacer > 0 && (
+              <TableRow style={{ height: `${topSpacer}px` }} className="hover:bg-transparent">
+                <TableCell
+                  colSpan={totalColSpan}
+                  className="p-0 border-0"
+                  style={{ height: `${topSpacer}px` }}
                 />
               </TableRow>
             )}
-            {visibleRows.length > 0 ? (
-              visibleRows.map((row) => {
+            {visibleDisplayRows.length > 0 ? (
+              visibleDisplayRows.map(({ row, isDetail, dataIndex }) => {
+                if (isDetail) {
+                  return (
+                    <TableRow key={`${row.id}-detail`} className="detail-row hover:bg-transparent">
+                      <TableCell
+                        colSpan={totalColSpan}
+                        className="p-0 bg-muted/20"
+                        style={virtualized ? { height: `${detailRowHeight}px` } : undefined}
+                      >
+                        <div className={cn("p-4", virtualized && "h-full overflow-auto")}>
+                          {detailRenderer!(row.originalRow)}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
                 if (row.isGroupHeader) {
                   const groupColDef = colDefsMap.get(row.groupField as keyof TData & string);
                   const groupHeaderText = groupColDef ? groupColDef.headerText : String(row.groupField);
                   return (
                     <TableRow key={row.id} className="group-header-row">
-                      <TableCell 
-                        colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)}
+                      <TableCell
+                        colSpan={totalColSpan}
                         className="px-3 py-2 cursor-pointer"
                         onClick={() => row.groupKey && handleToggleExpandGroup(row.groupKey)}
                       >
@@ -1410,7 +1659,28 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         />
                       </TableCell>
                     )}
-                    {orderedVisibleColumnDefs.map((colDef) => {
+                    {masterDetail && (
+                      <TableCell
+                        className="px-1 py-2 sticky-body-cell"
+                        style={{
+                          width: detailColumnWidth,
+                          minWidth: detailColumnWidth,
+                          left: detailColumnLeft,
+                          zIndex: 11,
+                          ...pinnedCellBg
+                        }}
+                      >
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleDetail(row.id); }}
+                          className="p-0.5 rounded hover:bg-accent focus:outline-none"
+                          aria-label={expandedDetails.has(row.id) ? "Collapse row detail" : "Expand row detail"}
+                          aria-expanded={expandedDetails.has(row.id)}
+                        >
+                          {expandedDetails.has(row.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                      </TableCell>
+                    )}
+                    {orderedVisibleColumnDefs.map((colDef, colIndex) => {
                        const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
                        const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
                        let stickyStyle: React.CSSProperties = {};
@@ -1434,7 +1704,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           (isLeftPinned || isRightPinned) && "sticky-body-cell",
                           isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
                           isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
-                          isFocused && !state.editingCell && "cell-focused"
+                          isFocused && !state.editingCell && "cell-focused",
+                          isCellInRange(dataIndex, colIndex) && "cell-range-selected"
                           )}
                         style={{
                           width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
@@ -1444,6 +1715,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         title={String(getCellValue(row, colDef.field))}
                         onClick={() => handleCellClick(row.id, colDef.field)}
                         onDoubleClick={() => colDef.editable && startEditingCell(row.id, colDef.field)}
+                        onMouseDown={(e) => handleCellMouseDown(e, dataIndex, colIndex)}
+                        onMouseEnter={() => handleCellMouseEnter(dataIndex, colIndex)}
+                        onContextMenu={(e) => handleCellContextMenu(e, dataIndex, colIndex, row.id, colDef.field)}
                       >
                         {renderCellContent(row, colDef)}
                       </TableCell>
@@ -1454,17 +1728,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} className="h-24 text-center">
+                <TableCell colSpan={totalColSpan} className="h-24 text-center">
                   No results found.
                 </TableCell>
               </TableRow>
             )}
-            {virtualized && endIndex < paginatedData.length && (
-              <TableRow style={{ height: `${(paginatedData.length - endIndex) * rowHeight}px` }} className="hover:bg-transparent">
-                <TableCell 
-                  colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
-                  className="p-0 border-0" 
-                  style={{ height: `${(paginatedData.length - endIndex) * rowHeight}px` }}
+            {virtualized && bottomSpacer > 0 && (
+              <TableRow style={{ height: `${bottomSpacer}px` }} className="hover:bg-transparent">
+                <TableCell
+                  colSpan={totalColSpan}
+                  className="p-0 border-0"
+                  style={{ height: `${bottomSpacer}px` }}
                 />
               </TableRow>
             )}
@@ -1483,6 +1757,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                     >
                       Total
                     </TableCell>
+                  )}
+                  {masterDetail && (
+                    <TableCell
+                      className="px-1 py-2 sticky-body-cell"
+                      style={{
+                        width: detailColumnWidth,
+                        minWidth: detailColumnWidth,
+                        left: detailColumnLeft,
+                        zIndex: 11
+                      }}
+                    />
                   )}
                   {orderedVisibleColumnDefs.map((colDef) => {
                     const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
@@ -1526,8 +1811,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 </TableRow>
               )}
               <TableRow>
-                <TableCell 
-                  colSpan={orderedVisibleColumnDefs.length + (enableRowSelection ? 1 : 0)} 
+                <TableCell
+                  colSpan={totalColSpan}
                   className="text-sm text-muted-foreground text-center"
                 >
                   Displaying {renderedRowsCount} row{renderedRowsCount === 1 ? "" : "s"} on this page.
@@ -1557,6 +1842,50 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           pageSizeOptions={pageSizeOptions}
         />
       )}
+      {contextMenu && (() => {
+        const ctxColDef = colDefsMap.get(contextMenu.colField);
+        const isPinnedLeft = state.pinnedColumns.left.includes(contextMenu.colField);
+        const isPinnedRight = state.pinnedColumns.right.includes(contextMenu.colField);
+        const menuLeft = Math.max(4, Math.min(contextMenu.x, window.innerWidth - 208));
+        const menuTop = Math.max(4, Math.min(contextMenu.y, window.innerHeight - 320));
+        const itemClass = "flex w-full items-center rounded-sm px-2 py-1.5 text-sm text-left cursor-default hover:bg-accent hover:text-accent-foreground focus:outline-none focus:bg-accent";
+        const runAndClose = (action: () => void) => () => { action(); setContextMenu(null); };
+        const copyContextRow = () => {
+          const row = paginatedData.find(r => r.id === contextMenu.rowId);
+          if (!row || row.isGroupHeader) return;
+          const text = orderedVisibleColumnDefs.map(c => String(getCellValue(row, c.field) ?? '')).join('\t');
+          navigator.clipboard?.writeText(text);
+        };
+        return (
+          <div
+            ref={contextMenuRef}
+            className="fixed z-50 min-w-[200px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+            style={{ left: menuLeft, top: menuTop }}
+            onContextMenu={(e) => e.preventDefault()}
+            role="menu"
+          >
+            <button role="menuitem" className={itemClass} onClick={runAndClose(() => copySelectionToClipboard(false))}>Copy</button>
+            <button role="menuitem" className={itemClass} onClick={runAndClose(() => copySelectionToClipboard(true))}>Copy with Headers</button>
+            <button role="menuitem" className={itemClass} onClick={runAndClose(copyContextRow)}>Copy Row</button>
+            <div className="my-1 h-px bg-border" role="separator" />
+            {!isPinnedLeft && (
+              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'left'))}>Pin Column Left</button>
+            )}
+            {!isPinnedRight && (
+              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'right'))}>Pin Column Right</button>
+            )}
+            {(isPinnedLeft || isPinnedRight) && (
+              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, null))}>Unpin Column</button>
+            )}
+            {ctxColDef?.hideable !== false && (
+              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handleColumnVisibilityChange(contextMenu.colField, false))}>Hide Column</button>
+            )}
+            <div className="my-1 h-px bg-border" role="separator" />
+            <button role="menuitem" className={itemClass} onClick={runAndClose(handleExportCsv)}>Export as CSV</button>
+            <button role="menuitem" className={itemClass} onClick={runAndClose(handleExportXlsx)}>Export as XLSX</button>
+          </div>
+        );
+      })()}
     </div>
   );
 }

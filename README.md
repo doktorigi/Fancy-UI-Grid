@@ -21,7 +21,10 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Column Reordering** — drag and drop unpinned column headers.
 * **Column Visibility Toggle** — show/hide columns from a dropdown.
 * **Pagination** — first/prev/next/last controls with selectable page size.
-* **Row Virtualization** — set `virtualized` and pagination is replaced by windowed rendering in a scrollable viewport; tens of thousands of rows scroll smoothly.
+* **Row Virtualization** — set `virtualized` and pagination is replaced by windowed rendering in a scrollable viewport; tens of thousands of rows scroll smoothly. Viewport height is configurable via `virtualizedMaxHeight`.
+* **Master-Detail Rows** — supply a `detailRenderer` and every row gets an expander that opens a full-width detail panel (any React content). Works with virtualization via a fixed `detailRowHeight`.
+* **Cell Range Selection** — Excel-style: drag across cells, Shift+click, or Shift+arrow keys to select a rectangular range; Ctrl/Cmd+C copies it as TSV.
+* **Context Menu** — right-click any cell for Copy / Copy with Headers / Copy Row, pin/unpin or hide the column, and CSV/XLSX export.
 * **Row Grouping** — drag a column header to the grouping panel to group rows, with expand/collapse.
 * **Group Aggregations** — declare `aggregate: 'sum' | 'avg' | 'min' | 'max' | 'count'` on a column and the group header shows the computed value.
 * **Tree Data** — render hierarchical parent/child data with expand/collapse and indentation.
@@ -116,10 +119,11 @@ See [`streamlit-component/README.md`](streamlit-component/README.md) for details
 | Keys | Action |
 | --- | --- |
 | Arrow keys | Move cell focus |
+| Shift + Arrow keys | Extend the cell range selection |
 | Space | Select/deselect row, or toggle tree node / group |
 | Enter / F2 | Edit the focused cell (if editable) |
-| Escape | Cancel editing |
-| Ctrl/Cmd + C | Copy focused cell, or selected rows as TSV |
+| Escape | Cancel editing, or clear the range selection / context menu |
+| Ctrl/Cmd + C | Copy the selected cell range, selected rows, or focused cell as TSV |
 
 ## Contributing
 

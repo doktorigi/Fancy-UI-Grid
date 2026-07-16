@@ -20,6 +20,11 @@ The `DataGrid` component is highly configurable through its props.
 | `storageKey`         | `string`                                                             | `'ngxMatDataGridState'` | The `localStorage` key used for state persistence. Set a unique key per grid instance so multiple grids don't overwrite each other's saved state. |
 | `virtualized`        | `boolean`                                                            | `false`        | If true, pagination is replaced with windowed (virtualized) rendering inside a scrollable viewport — suitable for tens of thousands of rows.   |
 | `rowHeight`          | `number`                                                             | `44`           | Fixed row height in px used by the virtualization window math. Only used when `virtualized` is true.                                          |
+| `virtualizedMaxHeight` | `number`                                                           | `500`          | Height (px) of the scroll viewport when `virtualized` is true.                                                                               |
+| `detailRenderer`     | `(row: TData) => React.ReactNode`                                    | `undefined`    | Enables master-detail: an expander column is added and each expanded row shows a full-width panel rendered by this function.                  |
+| `detailRowHeight`    | `number`                                                             | `300`          | Fixed detail panel height (px) used by the virtualization window math; the panel scrolls internally if its content is taller. Panels auto-size when not virtualized. |
+| `enableRangeSelection` | `boolean`                                                          | `true`         | Excel-style rectangular cell range selection via mouse drag, Shift+click, or Shift+arrow keys. Ctrl/Cmd+C copies the range as TSV.            |
+| `enableContextMenu`  | `boolean`                                                            | `true`         | Right-click context menu on cells: copy (cell/range/row, with headers), pin/unpin column, hide column, export CSV/XLSX.                       |
 | `getRowStyle`        | `(row: TData) => React.CSSProperties \| undefined`                   | `undefined`    | Returns inline styles for a data row (e.g. a status background color). A returned `backgroundColor` is also applied to that row's pinned cells so the color isn't masked during horizontal scroll. |
 | `onFilteredDataChange` | `(rows: TData[]) => void`                                          | `undefined`    | Fires with the filtered + sorted data rows (group headers excluded) whenever they change — useful for driving external KPIs/summaries.         |
 | `globalFilterFields` | `(keyof TData & string)[]`                                           | `undefined`    | Restricts the global search box to these fields. Omit to search all visible columns.                                                          |
@@ -94,9 +99,30 @@ Each object in the `columnDefs` prop array defines a column in the grid.
 
 ## Clipboard
 
-With the grid focused, **Ctrl/Cmd+C** copies:
+With the grid focused, **Ctrl/Cmd+C** copies (first match wins):
+*   The selected cell range (if it spans more than one cell) as tab-separated text.
 *   All selected rows (if any) as tab-separated text with a header row — paste-ready for Excel/Sheets.
 *   Otherwise, the value of the focused cell.
+
+## Range Selection
+
+When `enableRangeSelection` is on (default), a rectangular cell range can be selected by dragging across cells, Shift+clicking a second corner, or extending with Shift+arrow keys. Escape clears the range. Group header rows inside a range are skipped when copying. The range is defined over the rows/columns as currently displayed, so it resets whenever filtering, sorting, pagination, or grouping changes the display list.
+
+## Context Menu
+
+When `enableContextMenu` is on (default), right-clicking a cell opens a menu with:
+*   **Copy** / **Copy with Headers** — the current range (or the clicked cell), honoring the clipboard precedence above.
+*   **Copy Row** — the clicked row's visible columns as TSV.
+*   **Pin Column Left / Right / Unpin Column** — pin state of the clicked column.
+*   **Hide Column** — hides the clicked column (when `hideable` isn't `false`).
+*   **Export as CSV / XLSX** — same as the toolbar export (current filtered + sorted view).
+
+## Master-Detail
+
+Pass `detailRenderer={(row) => <YourPanel row={row} />}` to add an expander column. Expanding a row inserts a full-width panel under it rendering arbitrary React content. Notes:
+*   Detail expansion is transient — it is not persisted to `localStorage`.
+*   With `virtualized`, panels get a fixed height of `detailRowHeight` px (scrolling internally if needed) so the window math stays exact; without virtualization they auto-size.
+*   Works alongside row selection, grouping, pinned columns, and `getRowStyle`.
 
 ## State Persistence
 
