@@ -26,6 +26,7 @@ import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { DataGridGroupingPanel } from './DataGridGroupingPanel';
 import { DataGridStatusBar } from './DataGridStatusBar';
 import { DataGridFindBar } from './DataGridFindBar';
+import { Sparkline } from './Sparkline';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronRight, ChevronDown, FileDown, FilterX, GripVertical, Search } from 'lucide-react';
@@ -1613,7 +1614,25 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     if (col.cellRenderer) {
       return col.cellRenderer(cellValue, row.originalRow);
     }
-      
+
+    if (col.sparkline) {
+      const opts = col.sparkline;
+      const series = opts.values ? opts.values(row.originalRow) : cellValue;
+      const labels = typeof opts.labels === 'function' ? opts.labels(row.originalRow) : opts.labels;
+      return (
+        <Sparkline
+          values={series}
+          type={opts.type}
+          width={opts.width}
+          height={opts.height}
+          color={opts.color}
+          negativeColor={opts.negativeColor}
+          labels={labels}
+          format={opts.format}
+        />
+      );
+    }
+
     return cellValue !== null && cellValue !== undefined ? String(cellValue) : '';
   };
 
@@ -2068,7 +2087,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
                           ...stickyStyle
                         }}
-                        title={String(getCellValue(row, colDef.field))}
+                        title={colDef.sparkline ? undefined : String(getCellValue(row, colDef.field))}
                         onClick={() => handleCellClick(row.id, colDef.field)}
                         onDoubleClick={() => colDef.editable && startEditingCell(row.id, colDef.field)}
                         onMouseDown={(e) => handleCellMouseDown(e, dataIndex, colIndex)}

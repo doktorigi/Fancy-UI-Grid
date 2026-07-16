@@ -38,6 +38,7 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Column Header Groups** — give columns a `group: 'Premium'` label and contiguous runs render under one spanning header row; the Columns menu gains group-level show/hide checkboxes.
 * **Find in Grid** — Ctrl/Cmd+F (or the Find button) opens a find bar that highlights matching cells across all pages, with next/previous navigation that jumps pages or scrolls the virtualized viewport. On by default (`enableFind`).
 * **Row Drag Reorder** — set `enableRowReorder` with an `onRowsReordered` callback and each row gets a grip handle for drag-and-drop reordering; the handle deactivates while sorting or grouping is applied (the visual order wouldn't stick).
+* **In-Cell Sparklines** — declare `sparkline: { type: 'line' | 'area' | 'bar' | 'winloss' }` on a column whose value is a `number[]` (or supply a `values` accessor) and the cell renders an inline SVG mini chart: 2px line with the latest point accented, zero-baseline bars, or sign-only win/loss blocks. Hovering shows a per-point tooltip (optional `labels` such as months, and a `format` callback). Colors default to the theme primary, with a CVD-validated blue/red pair for positives/negatives (`--sparkline-positive` / `--sparkline-negative`, separate light and dark values). Pure geometry lives in `src/lib/sparkline.ts`.
 * **Comprehensive Keyboard Navigation** — arrow keys, Space to select/toggle, Enter/F2 to edit, Escape to cancel, Ctrl/Cmd+C to copy.
 * **Theming** — Light, Dark, and System themes.
 

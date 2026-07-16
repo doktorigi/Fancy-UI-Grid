@@ -2,6 +2,17 @@
 import type { LucideIcon } from 'lucide-react';
 
 export type FilterType = 'text' | 'number' | 'date' | 'date-tree' | 'select' | 'boolean';
+
+export interface SparklineColumnOptions<TData = any> {
+  type?: 'line' | 'area' | 'bar' | 'winloss'; // Default 'line'
+  values?: (row: TData) => number[]; // Derive the series; defaults to the cell value (must be number[])
+  width?: number; // px, default 120
+  height?: number; // px, default 28
+  color?: string; // line/area stroke and bar positive fill. Default: theme primary / --sparkline-positive.
+  negativeColor?: string; // bar/winloss negative fill. Default: --sparkline-negative.
+  labels?: string[] | ((row: TData) => string[]); // per-point tooltip labels (e.g. months)
+  format?: (value: number) => string; // tooltip value formatting
+}
 export type AggregateFunction = 'sum' | 'avg' | 'min' | 'max' | 'count';
 export type NumberFilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'between';
 export const numberFilterOperators: NumberFilterOperator[] = ['=', '!=', '<', '>', '<=', '>=', 'between'];
@@ -41,6 +52,7 @@ export interface ColumnDefinition<TData = any> {
   dateTreeBuckets?: DateTreeBucket[]; // Auto-derived for filterType 'date-tree' if not supplied
   iconName?: string;
   group?: string; // Header group label; contiguous columns sharing a label render under one spanning header
+  sparkline?: SparklineColumnOptions<TData>; // Render the cell as an inline mini chart; cellRenderer takes precedence
 }
 
 export interface SortConfig<TData = any> {

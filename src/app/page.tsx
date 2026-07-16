@@ -22,7 +22,9 @@ export interface ResultPolicy extends Policy {
   currentPremium: number;
   newPremium: number;
   difference: number;
-  raterVersion?: string; 
+  raterVersion?: string;
+  premiumHistory?: number[]; // trailing 12 months, sparkline demo
+  premiumDeltas?: number[]; // month-over-month sign, win/loss sparkline demo
 }
 
 

@@ -51,6 +51,11 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Sparkline win/loss pair — blue↔red diverging poles (CVD-validated per mode,
+       not a red/green pair). Hex equivalents: #2a78d6 / #e34948. */
+    --sparkline-positive: 213 68% 50%;
+    --sparkline-negative: 0 73% 59%;
   }
 
   .dark {
@@ -96,6 +101,11 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Dark-mode sparkline pair is its own validated pick (#3987e5 / #e66767),
+       not an automatic flip of the light values. */
+    --sparkline-positive: 213 77% 56%;
+    --sparkline-negative: 0 72% 65%;
   }
 }
 

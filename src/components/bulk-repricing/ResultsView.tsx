@@ -34,8 +34,30 @@ const formatCurrency = (value: number | undefined) => {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 };
 
+const TRAILING_MONTHS = ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'];
+
+// Deterministic 12-month premium history ending at the current premium, so the
+// sparkline demo is stable across reloads.
+const premiumHistoryFor = (id: number, currentPremium: number): number[] => {
+  const series: number[] = [];
+  let value = currentPremium;
+  for (let m = 11; m >= 0; m--) {
+    series.unshift(Math.round(value));
+    const wobble = (((id * 31 + m * 17) % 13) - 6) / 100; // -6%..+6%
+    value = value / (1 + wobble);
+  }
+  series[series.length - 1] = currentPremium;
+  return series;
+};
+
+const deltasOf = (history: number[]): number[] =>
+  history.slice(1).map((v, i) => v - history[i]);
+
 export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackToSearch }) => {
-  const [resultsData, setResultsData] = useState<ResultPolicy[]>(initialResultsData.map(d => ({...d, premium: d.currentPremium, raterVersion})));
+  const [resultsData, setResultsData] = useState<ResultPolicy[]>(initialResultsData.map(d => {
+    const premiumHistory = premiumHistoryFor(d.id, d.currentPremium);
+    return {...d, premium: d.currentPremium, raterVersion, premiumHistory, premiumDeltas: deltasOf(premiumHistory)};
+  }));
   const [virtualizedDemo, setVirtualizedDemo] = useState(false);
 
   // Deterministic synthetic dataset to demo virtualized scrolling over many rows.
@@ -47,6 +69,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
     return Array.from({ length: 5000 }, (_, i) => {
       const currentPremium = 800 + ((i * 137) % 2200);
       const difference = Math.round(currentPremium * (((i * 61) % 21) - 10)) / 100;
+      const premiumHistory = premiumHistoryFor(i + 1, currentPremium);
       return {
         id: i + 1,
         company: companies[i % companies.length],
@@ -59,6 +82,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
         premium: currentPremium,
         policyEff: `2025-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}`,
         raterVersion,
+        premiumHistory,
+        premiumDeltas: deltasOf(premiumHistory),
       };
     });
   }, [virtualizedDemo, resultsData, raterVersion]);
@@ -146,12 +171,42 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
         </span>
       ),
     },
-    { 
-      field: 'raterVersion', 
-      headerText: 'Rater', 
-      sortable: true, 
-      filterable: true, 
-      filterType: 'text', 
+    {
+      field: 'premiumHistory',
+      headerText: 'Premium Trend',
+      defaultWidth: '140px',
+      sortable: false,
+      groupable: false,
+      group: 'Premium',
+      sparkline: {
+        type: 'line',
+        width: 116,
+        height: 26,
+        labels: TRAILING_MONTHS,
+        format: (v) => formatCurrency(v),
+      },
+    },
+    {
+      field: 'premiumDeltas',
+      headerText: 'Δ / Month',
+      defaultWidth: '120px',
+      sortable: false,
+      groupable: false,
+      group: 'Premium',
+      sparkline: {
+        type: 'winloss',
+        width: 96,
+        height: 22,
+        labels: TRAILING_MONTHS.slice(1),
+        format: (v) => `${v >= 0 ? '+' : ''}${formatCurrency(v)}`,
+      },
+    },
+    {
+      field: 'raterVersion',
+      headerText: 'Rater',
+      sortable: true,
+      filterable: true,
+      filterType: 'text',
       defaultWidth: '100px',
     },
     {
