@@ -157,6 +157,7 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   enableFind?: boolean; // Ctrl+F find-in-grid bar with match highlighting and next/previous. Default true.
   enableRowReorder?: boolean; // Drag-handle column for reordering rows. Default false; needs onRowsReordered. Ignored for tree data and while sorted/grouped.
   onRowsReordered?: (data: TData[]) => void; // Receives the full data array in its new order after a row drag
+  enableRangeChart?: boolean; // "Chart Selection" in the context menu: chart the selected range in a dialog. Default true; needs range selection.
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {

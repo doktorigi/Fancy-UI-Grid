@@ -27,6 +27,8 @@ import { DataGridGroupingPanel } from './DataGridGroupingPanel';
 import { DataGridStatusBar } from './DataGridStatusBar';
 import { DataGridFindBar } from './DataGridFindBar';
 import { Sparkline } from './Sparkline';
+import { RangeChartDialog } from './RangeChartDialog';
+import { extractRangeChartData, type RangeChartData } from '@/lib/rangeChart';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronRight, ChevronDown, FileDown, FilterX, GripVertical, Search } from 'lucide-react';
@@ -76,6 +78,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   onFilteredDataChange,
   globalFilterFields,
   globalFilterPlaceholder = 'Search all columns...',
+  enableRangeChart = true,
   enableFillHandle = true,
   enableClipboardPaste = true,
   enableUndoRedo = true,
@@ -160,6 +163,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // Row drag-and-drop reorder.
   const [draggedRowId, setDraggedRowId] = React.useState<string | number | null>(null);
   const [rowDropTarget, setRowDropTarget] = React.useState<{ rowId: string | number; position: 'above' | 'below' } | null>(null);
+
+  // Chart Selection dialog. The extraction is snapshotted when the menu item is
+  // clicked so the open chart survives the range clearing underneath it.
+  const [rangeChartData, setRangeChartData] = React.useState<RangeChartData | null>(null);
 
   // Undo/redo over grid-driven cell edits. Refs, not state: the stacks never drive a
   // render on their own — the parent's data change does.
@@ -2258,6 +2265,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           const text = orderedVisibleColumnDefs.map(c => String(getCellValue(row, c.field) ?? '')).join('\t');
           navigator.clipboard?.writeText(text);
         };
+        const chartData = enableRangeChart && enableRangeSelection && rangeBounds
+          ? extractRangeChartData(paginatedData, orderedVisibleColumnDefs, rangeBounds)
+          : null;
         return (
           <div
             ref={contextMenuRef}
@@ -2269,6 +2279,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             <button role="menuitem" className={itemClass} onClick={runAndClose(() => copySelectionToClipboard(false))}>Copy</button>
             <button role="menuitem" className={itemClass} onClick={runAndClose(() => copySelectionToClipboard(true))}>Copy with Headers</button>
             <button role="menuitem" className={itemClass} onClick={runAndClose(copyContextRow)}>Copy Row</button>
+            {enableRangeChart && enableRangeSelection && (
+              <button
+                role="menuitem"
+                className={cn(itemClass, !chartData && "opacity-50 cursor-not-allowed")}
+                disabled={!chartData}
+                title={chartData ? undefined : 'Select a range with at least one numeric column'}
+                onClick={chartData ? runAndClose(() => setRangeChartData(chartData)) : undefined}
+              >
+                Chart Selection…
+              </button>
+            )}
             <div className="my-1 h-px bg-border" role="separator" />
             {!isPinnedLeft && (
               <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'left'))}>Pin Column Left</button>
@@ -2288,6 +2309,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           </div>
         );
       })()}
+      {rangeChartData && (
+        <RangeChartDialog data={rangeChartData} onClose={() => setRangeChartData(null)} />
+      )}
     </div>
   );
 }

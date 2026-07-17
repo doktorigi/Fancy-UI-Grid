@@ -56,6 +56,17 @@
        not a red/green pair). Hex equivalents: #2a78d6 / #e34948. */
     --sparkline-positive: 213 68% 50%;
     --sparkline-negative: 0 73% 59%;
+
+    /* Range-chart categorical slots, assigned in fixed order, never cycled.
+       Validated 8-slot palette (six-checks) for the light surface. */
+    --chart-1: 213 68% 50%;
+    --chart-2: 159 73% 40%;
+    --chart-3: 41 100% 46%;
+    --chart-4: 120 100% 26%;
+    --chart-5: 249 48% 44%;
+    --chart-6: 0 73% 59%;
+    --chart-7: 337 70% 70%;
+    --chart-8: 17 82% 56%;
   }
 
   .dark {
@@ -106,6 +117,16 @@
        not an automatic flip of the light values. */
     --sparkline-positive: 213 77% 56%;
     --sparkline-negative: 0 72% 65%;
+
+    /* Dark-mode chart slots are their own validated steps, not a flip. */
+    --chart-1: 213 77% 56%;
+    --chart-2: 159 73% 36%;
+    --chart-3: 40 100% 39%;
+    --chart-4: 120 100% 26%;
+    --chart-5: 247 69% 72%;
+    --chart-6: 0 72% 65%;
+    --chart-7: 338 61% 58%;
+    --chart-8: 17 70% 50%;
   }
 }
 
