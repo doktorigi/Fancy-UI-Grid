@@ -5,6 +5,8 @@
 
 A feature-rich, open-source React data grid built with Next.js, ShadCN UI components, and Tailwind CSS. Designed to be highly customizable and performant, inspired by enterprise-grade data grids — free under the MIT license.
 
+**▶ Live demo: [doktorigi.github.io/Fancy-UI-Grid](https://doktorigi.github.io/Fancy-UI-Grid/)** — every feature below, interactive. (The [bulk-repricing app demo](https://doktorigi.github.io/Fancy-UI-Grid/repricing/) shows the grid inside a realistic workflow.)
+
 ## Features
 
 * **Column Sorting** — click column headers to sort data.

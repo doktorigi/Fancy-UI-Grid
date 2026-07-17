@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition } from '@/types/data-grid';
 import { ArrowLeft, Table as TableIcon } from 'lucide-react';
-import type { ResultPolicy } from '@/app/page';
+import type { ResultPolicy } from './types';
 import { Badge } from '@/components/ui/badge';
 
 

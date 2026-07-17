@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition } from '@/types/data-grid';
 import { Search, Play } from 'lucide-react';
-import type { Policy } from '@/app/page';
+import type { Policy } from './types';
 
 
 const initialSearchTableData: Policy[] = [

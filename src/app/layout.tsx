@@ -4,8 +4,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: 'PUMB Bulk Repricing',
-  description: 'Bulk Repricing Application for PUMB.',
+  title: 'Fancy UI Grid — React data grid demo',
+  description: 'Live demo of Fancy UI Grid: filters, grouping, Excel-style editing, sparklines, and range charts.',
 };
 
 export default function RootLayout({
