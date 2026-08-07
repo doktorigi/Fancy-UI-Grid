@@ -1541,6 +1541,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   React.useEffect(() => {
     if (state.focusedCell && !state.editingCell && tableWrapperRef.current) {
+      // Click only updates React state; without this, DOM focus stays on
+      // <body>, so onKeyDown here never fires and arrow keys fall through
+      // to the browser's default page-scroll instead of cell navigation.
+      tableWrapperRef.current.focus({ preventScroll: true });
       const cellId = `cell-${state.focusedCell.rowId}-${state.focusedCell.colField}`;
       const cellElement = document.getElementById(cellId);
       if (cellElement) {
