@@ -931,7 +931,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         currentRightOffset += getColumnWidth(field);
       }
     });
-    return { left, right };
+    return { left, right, totalLeftWidth: currentLeftOffset, totalRightWidth: currentRightOffset };
   }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection, masterDetail, rowReorderEnabled]);
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.filter(r => !r.isGroupHeader).every(row => state.selectedRows.has(row.id));
@@ -1549,22 +1549,42 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       const cellElement = document.getElementById(cellId);
       if (cellElement) {
          const cellRect = cellElement.getBoundingClientRect();
-         const tableContainer = tableWrapperRef.current?.querySelector('.overflow-x-auto');
+         const tableContainer = tableWrapperRef.current?.querySelector('.overflow-x-auto') as HTMLElement | null;
 
          if (tableContainer) {
             const containerRect = tableContainer.getBoundingClientRect();
-            const isVisibleX = cellRect.left >= containerRect.left && cellRect.right <= containerRect.right;
-            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom; 
+            const colField = state.focusedCell.colField;
+            const isPinned = state.pinnedColumns.left.includes(colField) || state.pinnedColumns.right.includes(colField);
+            // Sticky pinned columns sit visually on top of the scroll area
+            // without shrinking its geometry, so a naive "is the cell's box
+            // inside the container's box" check reports a freshly-focused
+            // scrollable cell as already visible while it's actually rendered
+            // underneath the pinned overlay - keyboard nav across the pin
+            // boundary then leaves the two columns' contents overlapping.
+            // Shrink the horizontal bounds by the pinned width before
+            // comparing (pinned cells are exempt: they're always visible
+            // where they sit).
+            const visibleLeft = containerRect.left + (isPinned ? 0 : stickyOffsets.totalLeftWidth);
+            const visibleRight = containerRect.right - (isPinned ? 0 : stickyOffsets.totalRightWidth);
+            const isVisibleX = cellRect.left >= visibleLeft && cellRect.right <= visibleRight;
+            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom;
 
-            if (!isVisibleX || !isVisibleY) {
-                cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            if (!isPinned && !isVisibleX) {
+              if (cellRect.left < visibleLeft) {
+                tableContainer.scrollLeft -= (visibleLeft - cellRect.left);
+              } else if (cellRect.right > visibleRight) {
+                tableContainer.scrollLeft += (cellRect.right - visibleRight);
+              }
+            }
+            if (!isVisibleY) {
+              cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }
          } else {
              cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
          }
       }
     }
-  }, [state.focusedCell, state.editingCell, paginatedData]); 
+  }, [state.focusedCell, state.editingCell, paginatedData, state.pinnedColumns, stickyOffsets.totalLeftWidth, stickyOffsets.totalRightWidth]);
 
   if (!initialData) {
      return (
@@ -1758,6 +1778,28 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         style={virtualized ? { maxHeight: `${virtualizedMaxHeight}px` } : undefined}
       >
         <Table>
+          {/*
+            table-layout:fixed (see ui/table.tsx) makes column widths
+            authoritative instead of content-driven - without it, a header's
+            text+icons can force a column wider than its configured width,
+            while sticky offsets (computed from that same configured width)
+            don't know it happened, so later pinned columns render short and
+            overlap real content. A <colgroup> is what makes the configured
+            width stick even though the header has a colSpan'd group row
+            above it, which fixed layout can't otherwise derive per-column
+            widths from.
+          */}
+          <colgroup>
+            {rowReorderEnabled && <col style={{ width: reorderColumnWidth }} />}
+            {enableRowSelection && <col style={{ width: checkboxColumnWidth }} />}
+            {masterDetail && <col style={{ width: detailColumnWidth }} />}
+            {orderedVisibleColumnDefs.map(colDef => (
+              <col
+                key={colDef.field}
+                style={{ width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px` }}
+              />
+            ))}
+          </colgroup>
           <TableHeader>
             {hasHeaderGroups && headerGroupSpans && (
               <TableRow className="hover:bg-transparent">
@@ -1863,8 +1905,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 let stickyStyle: React.CSSProperties = {};
                 if (isLeftPinned) {
                   stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
+                  stickyStyle.zIndex = 21;
                 } else if (isRightPinned) {
                   stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
+                  stickyStyle.zIndex = 21;
                 }
 
                 return (
@@ -1973,10 +2017,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                   )
                 }
                 const rowStyle = getRowStyle?.(row.originalRow);
-                // Pinned cells paint an opaque bg-card; carry a row background onto them
-                // so the row color is not masked while horizontally scrolling.
+                // Pinned cells need to stay opaque so a scrolled-under column
+                // can't show through - but row tints are often translucent
+                // (alpha over the page background), so setting backgroundColor
+                // directly would make the "opaque" pinned cell see-through too.
+                // Layer the tint as a background-image over the cell's own
+                // solid bg-card instead: still reads as the row color, still
+                // fully opaque underneath it.
                 const pinnedCellBg = rowStyle?.backgroundColor
-                  ? { backgroundColor: rowStyle.backgroundColor }
+                  ? { backgroundImage: `linear-gradient(${rowStyle.backgroundColor}, ${rowStyle.backgroundColor})` }
                   : undefined;
                 return (
                   <TableRow
