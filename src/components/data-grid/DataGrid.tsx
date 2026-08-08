@@ -1837,7 +1837,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               />
             ))}
           </colgroup>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-30 bg-card">
             {hasHeaderGroups && headerGroupSpans && (
               <TableRow className="hover:bg-transparent">
                 {rowReorderEnabled && (
