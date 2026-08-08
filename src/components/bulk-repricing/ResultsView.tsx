@@ -140,7 +140,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterable: true,
       filterType: 'number',
       defaultWidth: '150px',
-      aggregate: 'sum',
+      aggregate: ['sum', 'avg'],
       group: 'Premium',
       cellRenderer: (value) => formatCurrency(value),
     },
@@ -151,9 +151,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterable: true,
       filterType: 'number',
       defaultWidth: '150px',
-      aggregate: 'sum',
+      aggregate: ['sum', 'avg'],
       group: 'Premium',
       editable: true,
+      conditionalFormats: [
+        { dataBar: { min: 800, max: 2500, color: 'rgba(59, 130, 246, 0.2)' } },
+      ],
       cellRenderer: (value) => formatCurrency(value),
     },
     {
@@ -163,7 +166,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       filterable: true,
       filterType: 'number',
       defaultWidth: '120px',
-      aggregate: 'sum',
+      aggregate: ['sum', 'avg'],
       group: 'Premium',
       cellRenderer: (value) => (
         <span className={value > 0 ? 'text-red-600 dark:text-red-400' : value < 0 ? 'text-green-600 dark:text-green-400' : ''}>
@@ -288,6 +291,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           enableGroupingPanel={true}
           virtualized={virtualizedDemo}
           storageKey="repricingResultsGrid"
+          conditionalFormats={[
+            { field: 'difference', operator: '>', value: 0, style: { color: '#dc2626', fontWeight: 'bold' } },
+            { field: 'difference', operator: '<', value: 0, style: { color: '#16a34a', fontWeight: 'bold' } },
+          ]}
           onCellEdit={handleCellEdit}
           enableRowReorder={!virtualizedDemo}
           onRowsReordered={handleRowsReordered}
