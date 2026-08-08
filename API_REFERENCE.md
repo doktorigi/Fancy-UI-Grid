@@ -29,6 +29,10 @@ The `DataGrid` component is highly configurable through its props.
 | `onFilteredDataChange` | `(rows: TData[]) => void`                                          | `undefined`    | Fires with the filtered + sorted data rows (group headers excluded) whenever they change — useful for driving external KPIs/summaries.         |
 | `globalFilterFields` | `(keyof TData & string)[]`                                           | `undefined`    | Restricts the global search box to these fields. Omit to search all visible columns.                                                          |
 | `globalFilterPlaceholder` | `string`                                                        | `'Search all columns...'` | Placeholder text for the global search box.                                                                                          |
+| `serverSide`         | `boolean`                                                            | `false`        | If true, disables client-side filtering, sorting, and slicing; grid relies on host/server data responses.                              |
+| `totalRowCount`      | `number`                                                             | `undefined`    | Total row count across all pages when `serverSide` is enabled.                                                                           |
+| `onServerParamsChange` | `(params: { page, pageSize, sortConfig, columnFilters, globalFilter }) => void` | `undefined` | Callback fired whenever pagination, sorting, or filtering state changes in `serverSide` mode.                                         |
+| `conditionalFormats` | `ConditionalFormatRule<TData>[]`                                     | `undefined`    | Array of declarative conditional formatting rules (operators, custom styles, color scales, data bars).                                  |
 
 ### `TData` Type Constraint
 

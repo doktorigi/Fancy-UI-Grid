@@ -26,6 +26,9 @@ def fancy_ui_grid(
     is_tree_data=False,
     tree_column=None,
     storage_key=None,
+    conditional_formats=None,
+    server_side=False,
+    total_row_count=None,
     height=None,
     key=None,
 ):
@@ -37,9 +40,7 @@ def fancy_ui_grid(
         column_defs: List of column definition dicts using the grid's
             camelCase keys, e.g. ``{"field": "name", "headerText": "Name",
             "sortable": True, "filterable": True, "filterType": "text",
-            "aggregate": "sum"}``. See API_REFERENCE.md. Function-valued
-            options (cellRenderer, headerRenderer) can't cross the
-            Python/JS boundary and are not supported here.
+            "aggregate": ["sum", "avg"]}``. See API_REFERENCE.md.
         default_page_size: Initial rows per page.
         page_size_options: Page size choices, default [10, 25, 50, 100].
         enable_row_selection: Show selection checkboxes.
@@ -48,12 +49,14 @@ def fancy_ui_grid(
         tree_column: Field that shows the tree expanders.
         storage_key: localStorage key for persisted grid state; set a
             unique key per grid.
+        conditional_formats: List of conditional formatting rule dicts.
+        server_side: Handle sorting/filtering/pagination on the server.
+        total_row_count: Total count of rows across all pages in server_side mode.
         height: Fixed iframe height in px. Default: auto-sized to content.
         key: Streamlit widget key.
 
     Returns:
-        dict with ``selected_ids`` (list of row ids) and ``edits`` (list of
-        ``{"row_id", "field", "value"}`` dicts, in the order they were made).
+        dict with ``selected_ids``, ``edits``, and ``server_params`` (page, pageSize, sortConfig, columnFilters, globalFilter).
     """
     if hasattr(data, "to_json"):  # pandas DataFrame, without importing pandas
         records = json.loads(data.to_json(orient="records", date_format="iso"))
@@ -71,7 +74,10 @@ def fancy_ui_grid(
         is_tree_data=is_tree_data,
         tree_column=tree_column,
         storage_key=storage_key,
+        conditional_formats=conditional_formats,
+        server_side=server_side,
+        total_row_count=total_row_count,
         height=height,
         key=key,
-        default={"selected_ids": [], "edits": []},
+        default={"selected_ids": [], "edits": [], "server_params": None},
     )

@@ -21,21 +21,37 @@ data = [
 column_defs = [
     {"field": "name", "headerText": "Name", "sortable": True, "filterable": True, "filterType": "text", "editable": True, "defaultWidth": "200px"},
     {"field": "department", "headerText": "Department", "sortable": True, "filterable": True, "filterType": "select"},
-    {"field": "age", "headerText": "Age", "sortable": True, "filterable": True, "filterType": "number", "aggregate": "avg", "defaultWidth": "100px"},
-    {"field": "salary", "headerText": "Salary", "sortable": True, "filterable": True, "filterType": "number", "aggregate": "sum", "editable": True},
+    {"field": "age", "headerText": "Age", "sortable": True, "filterable": True, "filterType": "number", "aggregate": ["avg", "min", "max"], "defaultWidth": "120px"},
+    {"field": "salary", "headerText": "Salary", "sortable": True, "filterable": True, "filterType": "number", "aggregate": ["sum", "avg"], "editable": True},
     {"field": "active", "headerText": "Active", "filterable": True, "filterType": "boolean", "defaultWidth": "100px"},
+]
+
+conditional_formats = [
+    {
+        "field": "salary",
+        "dataBar": {"min": 50000, "max": 120000, "color": "rgba(59, 130, 246, 0.25)"},
+    },
+    {
+        "field": "active",
+        "operator": "=",
+        "value": False,
+        "style": {"color": "#ef4444", "fontWeight": "bold"},
+    },
 ]
 
 result = fancy_ui_grid(
     data,
     column_defs,
     enable_grouping_panel=True,
+    conditional_formats=conditional_formats,
     storage_key="exampleAppGrid",
     key="demo_grid",
 )
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 col1.subheader("Selected row ids")
 col1.json(result["selected_ids"])
 col2.subheader("Cell edits")
 col2.json(result["edits"])
+col3.subheader("Server params")
+col3.json(result.get("server_params"))

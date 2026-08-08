@@ -375,31 +375,49 @@ export function computeAggregate<TData extends HierarchicalData<TData>>(
   items: ProcessedRow<TData>[],
   col: ColumnDefinition<TData>
 ): string {
-  if (col.aggregate === 'count') return String(items.length);
+  if (!col.aggregate) return '';
 
-  const nums = items
-    .map(item => parseFloat(String(getCellValue(item, col.field))))
-    .filter(n => !isNaN(n));
+  const aggList = Array.isArray(col.aggregate) ? col.aggregate : [col.aggregate];
+  const results: string[] = [];
 
-  if (nums.length === 0) return '';
+  for (const agg of aggList) {
+    if (agg === 'count') {
+      results.push(aggList.length > 1 ? `Count: ${items.length}` : `${items.length}`);
+      continue;
+    }
 
-  let result: number;
-  switch (col.aggregate) {
-    case 'sum':
-      result = nums.reduce((a, b) => a + b, 0);
-      break;
-    case 'avg':
-      result = nums.reduce((a, b) => a + b, 0) / nums.length;
-      break;
-    case 'min':
-      result = Math.min(...nums);
-      break;
-    case 'max':
-      result = Math.max(...nums);
-      break;
-    default:
-      return '';
+    const nums = items
+      .map(item => parseFloat(String(getCellValue(item, col.field))))
+      .filter(n => !isNaN(n));
+
+    if (nums.length === 0) continue;
+
+    let res: number;
+    switch (agg) {
+      case 'sum':
+        res = nums.reduce((a, b) => a + b, 0);
+        break;
+      case 'avg':
+        res = nums.reduce((a, b) => a + b, 0) / nums.length;
+        break;
+      case 'min':
+        res = Math.min(...nums);
+        break;
+      case 'max':
+        res = Math.max(...nums);
+        break;
+      default:
+        continue;
+    }
+
+    const formatted = res.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    if (aggList.length > 1) {
+      const label = agg.charAt(0).toUpperCase() + agg.slice(1);
+      results.push(`${label}: ${formatted}`);
+    } else {
+      results.push(formatted);
+    }
   }
 
-  return result.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return results.join(' | ');
 }

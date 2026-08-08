@@ -17,6 +17,38 @@ export type AggregateFunction = 'sum' | 'avg' | 'min' | 'max' | 'count';
 export type NumberFilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'between';
 export const numberFilterOperators: NumberFilterOperator[] = ['=', '!=', '<', '>', '<=', '>=', 'between'];
 
+export type ConditionalFormatOperator =
+  | '='
+  | '!='
+  | '<'
+  | '>'
+  | '<='
+  | '>='
+  | 'contains'
+  | 'startsWith'
+  | 'endsWith'
+  | 'between';
+
+export interface ConditionalFormatRule<TData = any> {
+  field?: keyof TData & string;
+  operator?: ConditionalFormatOperator;
+  value?: any;
+  value2?: any;
+  style?: React.CSSProperties;
+  className?: string;
+  colorScale?: {
+    min?: number;
+    max?: number;
+    minColor: string;
+    maxColor: string;
+  };
+  dataBar?: {
+    min?: number;
+    max?: number;
+    color?: string;
+  };
+}
+
 export type DateRangePreset = 'all' | 'today' | 'yesterday' | 'last7days' | 'last30days' | 'thisMonth' | 'lastMonth' | 'custom';
 
 export const dateRangePresetOptions: { label: string; value: DateRangePreset }[] = [
@@ -41,9 +73,10 @@ export interface ColumnDefinition<TData = any> {
   editable?: boolean; // Default false
   pinned?: 'left' | 'right' | null; // For column pinning
   groupable?: boolean; // Default true, whether column can be dragged to grouping panel
+  pivotable?: boolean; // Whether column can be pivoted
   headerRenderer?: () => React.ReactNode;
   cellRenderer?: (value: any, row: TData) => React.ReactNode; // Custom cell content; takes precedence over built-in rendering
-  aggregate?: AggregateFunction; // Shown in group header rows when grouping is active
+  aggregate?: AggregateFunction | AggregateFunction[]; // Single function or list of aggregate metrics shown in group header
   defaultWidth?: string | number;
   minWidth?: string | number; // Minimum width for resizing
   resizable?: boolean; // Default true
@@ -53,6 +86,7 @@ export interface ColumnDefinition<TData = any> {
   iconName?: string;
   group?: string; // Header group label; contiguous columns sharing a label render under one spanning header
   sparkline?: SparklineColumnOptions<TData>; // Render the cell as an inline mini chart; cellRenderer takes precedence
+  conditionalFormats?: ConditionalFormatRule<TData>[]; // Conditional formatting rules specific to this column
 }
 
 export interface SortConfig<TData = any> {
@@ -158,6 +192,18 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   enableRowReorder?: boolean; // Drag-handle column for reordering rows. Default false; needs onRowsReordered. Ignored for tree data and while sorted/grouped.
   onRowsReordered?: (data: TData[]) => void; // Receives the full data array in its new order after a row drag
   enableRangeChart?: boolean; // "Chart Selection" in the context menu: chart the selected range in a dialog. Default true; needs range selection.
+  conditionalFormats?: ConditionalFormatRule<TData>[]; // Grid-level conditional formatting rules applied across columns
+  serverSide?: boolean; // If true, filtering, sorting, and pagination are handled on the server
+  totalRowCount?: number; // Total count of rows across all pages when serverSide is true
+  onServerParamsChange?: (params: {
+    page: number;
+    pageSize: number;
+    sortConfig: SortConfig<TData> | null;
+    columnFilters: ActiveFilters<TData>;
+    globalFilter: string;
+  }) => void; // Event triggered when grid params change in serverSide mode
+  pivotMode?: boolean; // Enable pivot table mode
+  pivotColumns?: (keyof TData & string)[]; // Columns to pivot into dynamic header columns
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {

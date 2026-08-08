@@ -26,6 +26,7 @@ function FancyGrid({ args, theme }: ComponentProps) {
   const [data, setData] = React.useState<Row[]>(args.data ?? []);
   const edits = React.useRef<CellEdit[]>([]);
   const selectedIds = React.useRef<(string | number)[]>([]);
+  const serverParams = React.useRef<any>(null);
 
   React.useEffect(() => {
     setData(args.data ?? []);
@@ -37,6 +38,7 @@ function FancyGrid({ args, theme }: ComponentProps) {
     Streamlit.setComponentValue({
       selected_ids: selectedIds.current,
       edits: edits.current,
+      server_params: serverParams.current,
     });
   };
 
@@ -48,6 +50,11 @@ function FancyGrid({ args, theme }: ComponentProps) {
 
   const handleSelectionChange = (ids: (string | number)[]) => {
     selectedIds.current = ids;
+    pushState();
+  };
+
+  const handleServerParamsChange = (params: any) => {
+    serverParams.current = params;
     pushState();
   };
 
@@ -81,6 +88,10 @@ function FancyGrid({ args, theme }: ComponentProps) {
         isTreeData={args.is_tree_data ?? false}
         treeColumn={args.tree_column ?? undefined}
         storageKey={args.storage_key ?? 'fancyUiGridStreamlit'}
+        conditionalFormats={args.conditional_formats}
+        serverSide={args.server_side ?? false}
+        totalRowCount={args.total_row_count}
+        onServerParamsChange={handleServerParamsChange}
         onCellEdit={handleCellEdit}
         onSelectionChange={handleSelectionChange}
       />

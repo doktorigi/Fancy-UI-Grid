@@ -47,6 +47,11 @@ import {
   toStrictNumber,
 } from '@/lib/gridProcessing';
 import {
+  getConditionalCellStyle,
+  computeColumnBounds,
+  type DerivedColumnBounds,
+} from '@/lib/conditionalFormatting';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -86,6 +91,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   enableFind = true,
   enableRowReorder = false,
   onRowsReordered,
+  conditionalFormats,
+  serverSide = false,
+  totalRowCount,
+  onServerParamsChange,
+  pivotMode = false,
+  pivotColumns = [],
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -713,6 +724,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const stableGlobalFilterFields = React.useMemo(() => globalFilterFields, [globalFilterFieldsKey]);
 
   const filteredData = React.useMemo(() => {
+    if (serverSide) return baseDataForProcessing;
     return filterRows({
       rows: baseDataForProcessing,
       columns: processedColumnDefs,
@@ -721,11 +733,26 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       globalFilterFields: stableGlobalFilterFields,
       columnFilters: state.columnFilters,
     });
-  }, [baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, stableGlobalFilterFields]);
+  }, [serverSide, baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, stableGlobalFilterFields]);
 
   const sortedData = React.useMemo(() => {
+    if (serverSide) return filteredData;
     return sortRows(filteredData, colDefsMap, state.sortConfig, state.groupedBy, isTreeData);
-  }, [filteredData, state.sortConfig, state.groupedBy, colDefsMap, isTreeData]);
+  }, [serverSide, filteredData, state.sortConfig, state.groupedBy, colDefsMap, isTreeData]);
+
+  const onServerParamsChangeRef = React.useRef(onServerParamsChange);
+  onServerParamsChangeRef.current = onServerParamsChange;
+
+  React.useEffect(() => {
+    if (!serverSide) return;
+    onServerParamsChangeRef.current?.({
+      page: state.currentPage,
+      pageSize: state.pageSize,
+      sortConfig: state.sortConfig,
+      columnFilters: state.columnFilters,
+      globalFilter: state.globalFilter,
+    });
+  }, [serverSide, state.currentPage, state.pageSize, state.sortConfig, state.columnFilters, state.globalFilter]);
 
   // Report the filtered+sorted rows to the host (for external summaries/KPIs).
   // The callback is kept in a ref so an unstable function identity doesn't re-fire the effect.
@@ -819,14 +846,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }, [dataWithGroupHeaders, sortedData, state.groupedBy, isTreeData]);
 
   const paginatedData = React.useMemo(() => {
-    if (virtualized) {
+    if (virtualized || serverSide) {
       return dataToPaginate;
     }
     const startIndex = (state.currentPage - 1) * state.pageSize;
     return dataToPaginate.slice(startIndex, startIndex + state.pageSize);
-  }, [dataToPaginate, state.currentPage, state.pageSize, virtualized]);
+  }, [dataToPaginate, state.currentPage, state.pageSize, virtualized, serverSide]);
 
-  const totalPages = Math.ceil(dataToPaginate.length / state.pageSize);
+  const totalPages = serverSide
+    ? Math.max(1, Math.ceil((totalRowCount ?? (initialData?.length || 0)) / state.pageSize))
+    : Math.ceil(dataToPaginate.length / state.pageSize);
 
   // The display list interleaves a synthetic detail entry after each expanded master
   // row. dataIndex always points back at the row's position in paginatedData so range
@@ -845,6 +874,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     });
     return out;
   }, [paginatedData, masterDetail, expandedDetails]);
+
+  const columnBoundsMap = React.useMemo(() => {
+    const bounds: Record<string, DerivedColumnBounds> = {};
+    processedColumnDefs.forEach(col => {
+      bounds[col.field] = computeColumnBounds(baseDataForProcessing, col.field);
+    });
+    return bounds;
+  }, [processedColumnDefs, baseDataForProcessing]);
 
   // Prefix-sum row offsets make the window math exact even though detail panels
   // are taller than data rows. offsets[i] is the top of display row i.
@@ -2007,7 +2044,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                               .filter(c => c.aggregate)
                               .map(c => {
                                 const aggValue = computeAggregate(row.groupItems || [], c);
-                                return aggValue ? ` · ${aggregateLabels[c.aggregate!]} ${c.headerText}: ${aggValue}` : '';
+                                const label = typeof c.aggregate === 'string' ? aggregateLabels[c.aggregate] : '';
+                                return aggValue ? ` · ${label ? label + ' ' : ''}${c.headerText}: ${aggValue}` : '';
                               })
                               .join('')})
                           </span>
@@ -2123,6 +2161,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         const isFindMatch = findOpen && findMatchSet.has(`${row.id}|${colDef.field}`);
                         const isActiveFindMatch = isFindMatch && activeMatch?.rowId === row.id && activeMatch?.field === colDef.field;
 
+                        const cellRules = [
+                          ...(conditionalFormats || []),
+                          ...(colDef.conditionalFormats || []),
+                        ];
+                        const conditionalStyle = getConditionalCellStyle(
+                          row,
+                          colDef.field,
+                          cellRules,
+                          columnBoundsMap[colDef.field]
+                        );
+
                       return (
                       <TableCell
                         key={colDef.field}
@@ -2145,6 +2194,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         style={{
                           width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
                           maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                          ...conditionalStyle,
                           ...stickyStyle
                         }}
                         title={colDef.sparkline ? undefined : String(getCellValue(row, colDef.field))}
@@ -2253,7 +2303,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         {hasAggregate && aggVal ? (
                           <span>
                             <span className="text-xs text-muted-foreground mr-1">
-                              {aggregateLabels[colDef.aggregate!]}
+                              {typeof colDef.aggregate === 'string' ? aggregateLabels[colDef.aggregate] : ''}
                             </span>
                             {aggVal}
                           </span>

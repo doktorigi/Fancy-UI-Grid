@@ -28,7 +28,9 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Cell Range Selection** — Excel-style: drag across cells, Shift+click, or Shift+arrow keys to select a rectangular range; Ctrl/Cmd+C copies it as TSV.
 * **Context Menu** — right-click any cell for Copy / Copy with Headers / Copy Row, pin/unpin or hide the column, and CSV/XLSX export.
 * **Row Grouping** — drag a column header to the grouping panel to group rows, with expand/collapse.
-* **Group Aggregations** — declare `aggregate: 'sum' | 'avg' | 'min' | 'max' | 'count'` on a column and the group header shows the computed value.
+* **Group & Multi-Aggregations** — declare `aggregate: 'sum' | 'avg' | 'min' | 'max' | 'count'` or an array of metrics `['sum', 'avg']` on a column, and the group header & footer show multi-metric summaries.
+* **Declarative Conditional Formatting** — specify conditional format rules (`ConditionalFormatRule`), color scales (min/max gradient interpolation), and progress data bars (`linear-gradient`) directly via props without custom JS renderers.
+* **Server-Side Data Operations** — set `serverSide` with `totalRowCount` and `onServerParamsChange` to bypass client-side processing and stream pagination, sorting, and filtering state to host backends or SQL engines.
 * **Tree Data** — render hierarchical parent/child data with expand/collapse and indentation.
 * **Copy to Clipboard** — Ctrl/Cmd+C copies the focused cell, or all selected rows (with headers) as tab-separated text ready to paste into a spreadsheet.
 * **Export to CSV & XLSX** — exports the current filtered/sorted view, with CSV formula-injection protection.
