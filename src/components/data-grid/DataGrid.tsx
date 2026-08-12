@@ -202,24 +202,33 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           let reconciledVisibleColumns = (savedState.visibleColumns || [])
             .filter((field: keyof TData & string) => currentFieldsSet.has(field));
           initialColumnDefs.forEach(col => {
-            if (!reconciledVisibleColumns.includes(col.field) && col.hideable !== false) {
-            } else if (col.hideable === false && !reconciledVisibleColumns.includes(col.field)) {
-               reconciledVisibleColumns.push(col.field);
+            if (!reconciledVisibleColumns.includes(col.field)) {
+              if (col.hideable === false || col.pinned === 'left' || col.pinned === 'right' || !savedState.visibleColumns) {
+                reconciledVisibleColumns.push(col.field);
+              }
             }
           });
           if (reconciledVisibleColumns.length === 0 && initialColumnDefs.length > 0) {
              reconciledVisibleColumns = initialColumnDefs.map(col => col.field);
           }
 
-          let reconciledUnpinnedOrder = (savedState.columnOrder || [])
-            .filter((field: keyof TData & string) => currentFieldsSet.has(field) &&
-                                                 !savedState.pinnedColumns?.left?.includes(field) &&
-                                                 !savedState.pinnedColumns?.right?.includes(field));
-
           const reconciledPinnedLeft = (savedState.pinnedColumns?.left || [])
             .filter((field: keyof TData & string) => currentFieldsSet.has(field));
           const reconciledPinnedRight = (savedState.pinnedColumns?.right || [])
             .filter((field: keyof TData & string) => currentFieldsSet.has(field));
+
+          initialColumnDefs.forEach(col => {
+            if (col.pinned === 'left' && !reconciledPinnedLeft.includes(col.field)) {
+              reconciledPinnedLeft.push(col.field);
+            } else if (col.pinned === 'right' && !reconciledPinnedRight.includes(col.field)) {
+              reconciledPinnedRight.push(col.field);
+            }
+          });
+
+          let reconciledUnpinnedOrder = (savedState.columnOrder || [])
+            .filter((field: keyof TData & string) => currentFieldsSet.has(field) &&
+                                                 !reconciledPinnedLeft.includes(field) &&
+                                                 !reconciledPinnedRight.includes(field));
 
           initialColumnDefs.forEach(colDef => {
             if (!reconciledPinnedLeft.includes(colDef.field) &&
@@ -1608,28 +1617,33 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
          if (tableContainer) {
             const containerRect = tableContainer.getBoundingClientRect();
             const colField = state.focusedCell.colField;
-            const isPinned = state.pinnedColumns.left.includes(colField) || state.pinnedColumns.right.includes(colField);
-            // Sticky pinned columns sit visually on top of the scroll area
-            // without shrinking its geometry, so a naive "is the cell's box
-            // inside the container's box" check reports a freshly-focused
-            // scrollable cell as already visible while it's actually rendered
-            // underneath the pinned overlay - keyboard nav across the pin
-            // boundary then leaves the two columns' contents overlapping.
-            // Shrink the horizontal bounds by the pinned width before
-            // comparing (pinned cells are exempt: they're always visible
-            // where they sit).
-            const visibleLeft = containerRect.left + (isPinned ? 0 : stickyOffsets.totalLeftWidth);
-            const visibleRight = containerRect.right - (isPinned ? 0 : stickyOffsets.totalRightWidth);
-            const isVisibleX = cellRect.left >= visibleLeft && cellRect.right <= visibleRight;
-            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom;
+            const isLeftPinned = state.pinnedColumns.left.includes(colField);
+            const isRightPinned = state.pinnedColumns.right.includes(colField);
 
-            if (!isPinned && !isVisibleX) {
-              if (cellRect.left < visibleLeft) {
-                tableContainer.scrollLeft -= (visibleLeft - cellRect.left);
-              } else if (cellRect.right > visibleRight) {
-                tableContainer.scrollLeft += (cellRect.right - visibleRight);
+            if (isLeftPinned) {
+              if (tableContainer.scrollLeft > 0) {
+                tableContainer.scrollLeft = 0;
+              }
+            } else if (isRightPinned) {
+              const maxScroll = tableContainer.scrollWidth - tableContainer.clientWidth;
+              if (tableContainer.scrollLeft < maxScroll) {
+                tableContainer.scrollLeft = maxScroll;
+              }
+            } else {
+              const visibleLeft = containerRect.left + stickyOffsets.totalLeftWidth;
+              const visibleRight = containerRect.right - stickyOffsets.totalRightWidth;
+              const isVisibleX = cellRect.left >= visibleLeft && cellRect.right <= visibleRight;
+
+              if (!isVisibleX) {
+                if (cellRect.left < visibleLeft) {
+                  tableContainer.scrollLeft -= (visibleLeft - cellRect.left);
+                } else if (cellRect.right > visibleRight) {
+                  tableContainer.scrollLeft += (cellRect.right - visibleRight);
+                }
               }
             }
+
+            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom;
             if (!isVisibleY) {
               cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }
