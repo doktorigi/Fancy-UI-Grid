@@ -1412,6 +1412,23 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
 
   const handleGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Keys typed into interactive elements rendered by custom cells (inputs,
+    // popover search boxes, the find bar) belong to those elements. Only the
+    // grid's own inline cell editor (state.editingCell) takes part in grid key
+    // handling — without this, Space/arrows/Enter get preventDefault'ed and
+    // never reach the field. Portaled popovers still bubble here through the
+    // React tree, so a DOM-containment check would not cover them.
+    const keyTarget = e.target as HTMLElement;
+    if (
+      !state.editingCell &&
+      (keyTarget.tagName === 'INPUT' ||
+        keyTarget.tagName === 'TEXTAREA' ||
+        keyTarget.tagName === 'SELECT' ||
+        keyTarget.isContentEditable)
+    ) {
+      return;
+    }
+
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !state.editingCell) {
       const textToCopy = buildCopyText(false);
       if (textToCopy) {
@@ -1958,9 +1975,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       ...stickyStyle
                     }}
                     className={cn(
-                      "px-0 py-0 sticky bg-card z-20",
+                      "px-0 py-0",
                       headerTopClass,
-                      (isLeftPinned || isRightPinned) && "sticky-header-cell",
+                      (isLeftPinned || isRightPinned) && "sticky-header-cell bg-card",
                       isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
                       isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
                       isGrouped && "bg-muted/70"
