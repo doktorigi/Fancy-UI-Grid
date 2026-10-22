@@ -45,6 +45,29 @@ result = fancy_ui_grid(
     enable_grouping_panel=True,
     enable_floating_filters=True,
     enable_pivot_toggle=True,
+    formula_columns=[
+        {
+            "field": "calc_bonus_est",
+            "headerText": "Est. Bonus (15%)",
+            "formula": "=ROUND([salary] * 0.15, 0)",
+            "aggregate": "sum",
+            "filterType": "number",
+        }
+    ],
+    saved_views=[
+        {
+            "id": "preset_eng_high_earners",
+            "name": "Engineering > $90k",
+            "state": {
+                "columnFilters": {
+                    "department": {"type": "select", "value": ["Engineering"]},
+                    "salary": {"type": "number", "operator": ">", "value": 90000},
+                },
+                "multiSortConfig": [{"field": "salary", "direction": "desc"}],
+                "density": "compact",
+            },
+        }
+    ],
     conditional_formats=conditional_formats,
     storage_key="exampleAppGrid",
     key="demo_grid",

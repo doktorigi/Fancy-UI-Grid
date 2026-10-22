@@ -12,6 +12,8 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Single & Multi-Column Sorting** — click column headers to cycle `asc → desc → none`, or **Shift+Click** multiple headers to sort by multiple columns in priority order with numbered badges (`1`, `2`, `3`…).
 * **Floating Filter Row (Quick Filters)** — set `enableFloatingFilters` (or toggle **Quick Filters** in the toolbar) to display an inline filter row directly beneath headers supporting instant substring search, numeric comparisons/ranges (`>100`, `<=50`, `10..50`), dropdowns, and date buckets.
 * **Interactive Pivot Table Mode** — set `pivotMode` (or toggle **Pivot Mode** in the toolbar) to cross-tabulate row groups against dynamic pivot columns with a drag-and-drop Pivot Panel (Rows, Columns, Values), multi-metric aggregations (`sum`, `avg`, `min`, `max`, `count`), and Row + Column Grand Totals.
+* **Column Formulas & Calculated Columns** — declare `formula` on any `ColumnDefinition` (e.g. `formula: "=ROUND(([newPrice] - [oldPrice]) / [oldPrice] * 100, 1)"`) or let users create/edit calculated columns on the fly via the **Formulas** toolbar builder (`enableFormulaColumns`, `formulaColumns`). Supports Excel functions (`IF`, `IFS`, `IFERROR`, `COALESCE`, `ROUND`, `FLOOR`, `CEIL`, `ABS`, `SQRT`, `POW`, `MOD`, `MIN`, `MAX`, `SUM`, `AVG`, `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `LEN`, `LEFT`, `RIGHT`, `AND`, `OR`, `NOT`), chained formula references, cycle detection (`#CYCLE!`), and automatic recalculation on cell edit.
+* **Saved Views & Row Density Switcher** — snapshot and switch between named grid configurations (filters, multi-sort, grouping, pivot layout, column visibility/order/pinning, formula columns, and density) via the **Views** toolbar menu (`enableSavedViews`, `savedViews`), plus toggle between **Compact**, **Normal**, and **Comfortable** row density (`density`, `enableDensitySelector`).
 * **Row Selection** — checkboxes per row, plus "select all on page".
 * **Column Resizing** — drag header borders to resize columns, or double-click a border to auto-fit content.
 * **Global Search (Quick Filter)** — filter across all visible columns, or restrict it to specific fields with `globalFilterFields`.
@@ -67,7 +69,7 @@ The grid is distributed ShadCN-style: copy the source into your project rather t
 1. **Copy these files** into your Next.js/React + Tailwind project:
    * `src/components/data-grid/` (the whole folder)
    * `src/types/data-grid.ts`
-   * `src/lib/utils.ts`, `src/lib/gridProcessing.ts`, `src/lib/pivotTable.ts`, `src/lib/conditionalFormatting.ts`, `src/lib/rangeChart.ts`, `src/lib/sparkline.ts`, and `src/lib/exportUtils.ts`
+   * `src/lib/utils.ts`, `src/lib/gridProcessing.ts`, `src/lib/pivotTable.ts`, `src/lib/formulaEngine.ts`, `src/lib/savedViews.ts`, `src/lib/conditionalFormatting.ts`, `src/lib/rangeChart.ts`, `src/lib/sparkline.ts`, and `src/lib/exportUtils.ts`
    * The grid-specific styles from `src/app/globals.css` (the `.sticky-header-cell`, `.sticky-body-cell`, `.pinned-*-shadow`, `.cell-focused`, `.group-header-row`, and column-drag rules)
 
 2. **Install the npm dependencies** the grid uses:

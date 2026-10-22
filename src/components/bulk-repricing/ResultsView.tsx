@@ -289,6 +289,55 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           enableGroupingPanel={true}
           enableFloatingFilters={true}
           enablePivotToggle={true}
+          formulaColumns={[
+            {
+              field: 'calc_rate_change_pct',
+              headerText: 'Rate Change %',
+              formula: '=ROUND(([newPremium] - [currentPremium]) / [currentPremium] * 100, 1)',
+              aggregate: 'avg',
+              filterType: 'number',
+            },
+          ]}
+          savedViews={[
+            {
+              id: 'preset_rate_increases',
+              name: 'Rate Increases (> $0)',
+              builtIn: true,
+              state: {
+                columnFilters: {
+                  difference: { type: 'number', operator: '>', value: 0 },
+                },
+                multiSortConfig: [{ field: 'difference', direction: 'desc' }],
+                floatingFiltersOpen: true,
+                density: 'normal',
+              },
+            },
+            {
+              id: 'preset_state_program_pivot',
+              name: 'State × Program Pivot',
+              builtIn: true,
+              state: {
+                pivotMode: true,
+                groupedBy: ['state'],
+                pivotColumns: ['program'],
+                pivotValues: [{ field: 'newPremium', aggregate: 'sum' }],
+                density: 'normal',
+              },
+            },
+            {
+              id: 'preset_compact_audit',
+              name: 'Compact Multi-Sort Audit',
+              builtIn: true,
+              state: {
+                multiSortConfig: [
+                  { field: 'state', direction: 'asc' },
+                  { field: 'newPremium', direction: 'desc' },
+                ],
+                floatingFiltersOpen: true,
+                density: 'compact',
+              },
+            },
+          ]}
           virtualized={virtualizedDemo}
           storageKey="repricingResultsGrid"
           conditionalFormats={[

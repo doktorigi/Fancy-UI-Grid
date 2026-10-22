@@ -87,6 +87,47 @@ export interface ColumnDefinition<TData = any> {
   group?: string; // Header group label; contiguous columns sharing a label render under one spanning header
   sparkline?: SparklineColumnOptions<TData>; // Render the cell as an inline mini chart; cellRenderer takes precedence
   conditionalFormats?: ConditionalFormatRule<TData>[]; // Conditional formatting rules specific to this column
+  formula?: string; // Excel-style calculated column expression, e.g. "=[price] * [quantity]" or "=IF([margin] > 0.2, 'High', 'Low')"
+}
+
+export type GridDensity = 'compact' | 'normal' | 'comfortable';
+
+export interface FormulaColumnConfig {
+  field: string;
+  headerText: string;
+  formula: string;
+  aggregate?: AggregateFunction | AggregateFunction[];
+  filterType?: FilterType;
+}
+
+export interface GridViewStateSnapshot<TData = any> {
+  globalFilter?: string;
+  columnFilters?: ActiveFilters<TData>;
+  sortConfig?: SortConfig<TData> | null;
+  multiSortConfig?: SortConfig<TData>[];
+  groupedBy?: (keyof TData & string)[];
+  visibleColumns?: (keyof TData & string)[];
+  columnOrder?: (keyof TData & string)[];
+  pinnedColumns?: {
+    left: (keyof TData & string)[];
+    right: (keyof TData & string)[];
+  };
+  columnWidths?: Record<string, string | number>;
+  pivotMode?: boolean;
+  pivotColumns?: (keyof TData & string)[];
+  pivotValues?: PivotValueConfig<TData>[];
+  floatingFiltersOpen?: boolean;
+  density?: GridDensity;
+  pageSize?: number;
+  formulaColumns?: FormulaColumnConfig[];
+}
+
+export interface GridViewPreset<TData = any> {
+  id: string;
+  name: string;
+  createdAt?: string;
+  builtIn?: boolean;
+  state: GridViewStateSnapshot<TData>;
 }
 
 export interface SortConfig<TData = any> {
@@ -214,6 +255,15 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   enablePivotToggle?: boolean; // Show a Pivot Mode toggle button in the toolbar
   pivotColumns?: (keyof TData & string)[]; // Columns to pivot into dynamic header columns
   pivotValues?: PivotValueConfig<TData>[]; // Value fields and aggregate functions for pivot cells (defaults to columns with aggregate)
+  density?: GridDensity; // Initial row density ('compact' | 'normal' | 'comfortable'). Default 'normal'.
+  enableDensitySelector?: boolean; // Show row density switcher in toolbar. Default true.
+  onDensityChange?: (density: GridDensity) => void;
+  enableSavedViews?: boolean; // Show Saved Views preset manager in toolbar. Default true.
+  savedViews?: GridViewPreset<TData>[]; // Built-in or initial named view presets
+  onSavedViewsChange?: (views: GridViewPreset<TData>[]) => void;
+  enableFormulaColumns?: boolean; // Show "+ Formula" calculated column manager in toolbar. Default true.
+  formulaColumns?: FormulaColumnConfig[]; // Initial/controlled formula column definitions
+  onFormulaColumnsChange?: (columns: FormulaColumnConfig[]) => void;
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {
@@ -243,4 +293,7 @@ export interface DataGridState<TData extends HierarchicalData<TData>> {
   pivotColumns?: (keyof TData & string)[];
   pivotValues?: PivotValueConfig<TData>[];
   floatingFiltersOpen?: boolean;
+  density?: GridDensity;
+  formulaColumns?: FormulaColumnConfig[];
+  activeViewId?: string | null;
 }

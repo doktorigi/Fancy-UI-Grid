@@ -90,6 +90,12 @@ function FancyGrid({ args, theme }: ComponentProps) {
         enablePivotToggle={args.enable_pivot_toggle}
         pivotColumns={args.pivot_columns ?? []}
         pivotValues={args.pivot_values}
+        density={args.density ?? 'normal'}
+        enableDensitySelector={args.enable_density_selector ?? true}
+        enableSavedViews={args.enable_saved_views ?? true}
+        savedViews={args.saved_views ?? []}
+        enableFormulaColumns={args.enable_formula_columns ?? true}
+        formulaColumns={args.formula_columns ?? []}
         isTreeData={args.is_tree_data ?? false}
         treeColumn={args.tree_column ?? undefined}
         storageKey={args.storage_key ?? 'fancyUiGridStreamlit'}

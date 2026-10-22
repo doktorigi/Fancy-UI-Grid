@@ -28,6 +28,12 @@ def fancy_ui_grid(
     enable_pivot_toggle=None,
     pivot_columns=None,
     pivot_values=None,
+    density="normal",
+    enable_density_selector=True,
+    enable_saved_views=True,
+    saved_views=None,
+    enable_formula_columns=True,
+    formula_columns=None,
     is_tree_data=False,
     tree_column=None,
     storage_key=None,
@@ -55,6 +61,12 @@ def fancy_ui_grid(
         enable_pivot_toggle: Show the Pivot Mode toggle button in the toolbar.
         pivot_columns: List of column field names to pivot into dynamic headers.
         pivot_values: List of ``{"field": ..., "aggregate": ...}`` dicts for pivot metrics.
+        density: Initial row density (``'compact'``, ``'normal'``, or ``'comfortable'``).
+        enable_density_selector: Show the row density switcher in the toolbar.
+        enable_saved_views: Show the Saved Views preset manager in the toolbar.
+        saved_views: Optional list of preset view dicts (``{"id", "name", "state"}``).
+        enable_formula_columns: Show the ``Formulas`` calculated column builder in the toolbar.
+        formula_columns: Optional list of calculated column dicts (``{"field", "headerText", "formula", "aggregate"}``).
         is_tree_data: Render hierarchical rows (dicts with ``children``).
         tree_column: Field that shows the tree expanders.
         storage_key: localStorage key for persisted grid state; set a
@@ -86,6 +98,12 @@ def fancy_ui_grid(
         enable_pivot_toggle=enable_pivot_toggle,
         pivot_columns=pivot_columns or [],
         pivot_values=pivot_values,
+        density=density,
+        enable_density_selector=enable_density_selector,
+        enable_saved_views=enable_saved_views,
+        saved_views=saved_views or [],
+        enable_formula_columns=enable_formula_columns,
+        formula_columns=formula_columns or [],
         is_tree_data=is_tree_data,
         tree_column=tree_column,
         storage_key=storage_key,

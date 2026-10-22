@@ -22,6 +22,15 @@ The `DataGrid` component is highly configurable through its props.
 | `enablePivotToggle`  | `boolean`                                                            | Auto           | Shows the **Pivot Mode** toggle button in the toolbar (defaults to `true` when `enableGroupingPanel` or `pivotMode` is enabled).       |
 | `pivotColumns`       | `(keyof TData & string)[]`                                           | `[]`           | Initial columns whose distinct values are pivoted into dynamic column headers.                                                            |
 | `pivotValues`        | `PivotValueConfig<TData>[]`                                          | Derived        | Array of `{ field, aggregate, headerText? }` metrics for pivot cells. Defaults to columns that define `aggregate`.                        |
+| `density`            | `'compact' \| 'normal' \| 'comfortable'`                             | `'normal'`     | Initial row density controlling cell padding, font sizing, and default virtualized row height (`32px`, `48px`, `58px`).                   |
+| `enableDensitySelector` | `boolean`                                                         | `true`         | Shows the row density switcher dropdown in the toolbar.                                                                                   |
+| `onDensityChange`    | `(density: GridDensity) => void`                                     | `undefined`    | Callback fired when the user switches row density.                                                                                        |
+| `enableSavedViews`   | `boolean`                                                            | `true`         | Shows the **Views** preset manager in the toolbar to save, load, update, and delete named grid snapshots.                                 |
+| `savedViews`         | `GridViewPreset<TData>[]`                                            | `[]`           | Built-in or initial named view presets (`{ id, name, state }`) merged with user-saved views in `localStorage`.                            |
+| `onSavedViewsChange` | `(views: GridViewPreset<TData>[]) => void`                           | `undefined`    | Callback fired when user-saved views are added, updated, or deleted.                                                                      |
+| `enableFormulaColumns` | `boolean`                                                          | `true`         | Shows the **Formulas** calculated column builder in the toolbar.                                                                          |
+| `formulaColumns`     | `FormulaColumnConfig[]`                                              | `[]`           | Initial or controlled calculated formula columns (`{ field, headerText, formula, aggregate?, filterType? }`).                             |
+| `onFormulaColumnsChange` | `(columns: FormulaColumnConfig[]) => void`                       | `undefined`    | Callback fired when formula columns are added, edited, or removed via the toolbar.                                                        |
 | `storageKey`         | `string`                                                             | `'ngxMatDataGridState'` | The `localStorage` key used for state persistence. Set a unique key per grid instance so multiple grids don't overwrite each other's saved state. |
 | `virtualized`        | `boolean`                                                            | `false`        | If true, pagination is replaced with windowed (virtualized) rendering inside a scrollable viewport — suitable for tens of thousands of rows.   |
 | `rowHeight`          | `number`                                                             | `44`           | Fixed row height in px used by the virtualization window math. Only used when `virtualized` is true.                                          |
@@ -77,6 +86,20 @@ Each object in the `columnDefs` prop array defines a column in the grid.
 | `resizable`         | `boolean`                                 | `true`      | If true (default), the column's width can be changed by dragging its header border.                                                            |
 | `reorderable`       | `boolean`                                 | `true`      | If true (default), the column can be reordered by dragging its header (applies to unpinned columns).                                         |
 | `iconName`          | `string`                                  | `undefined` | Name of a Lucide icon (e.g., 'Users', 'Mail') to display in the column header.                                                                |
+| `formula`           | `string`                                  | `undefined` | Excel-style formula expression evaluated per row (e.g., `"=ROUND(([newPrice] - [oldPrice]) / [oldPrice] * 100, 1)"`).                         |
+
+
+## Column Formulas & Calculated Columns
+
+Columns can compute their values dynamically via `ColumnDefinition.formula` or via the toolbar **Formulas** builder (`formulaColumns`):
+*   **Field References**: Use `[fieldName]` (or bare identifiers) to reference any row field or another formula column.
+*   **Functions**: `IF`, `IFS`, `IFERROR`, `COALESCE`, `ROUND`, `FLOOR`, `CEIL`, `ABS`, `SQRT`, `POW`, `MOD`, `MIN`, `MAX`, `SUM`, `AVG`, `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `LEN`, `LEFT`, `RIGHT`, `AND`, `OR`, `NOT`, `ISBLANK`, `ISNUMBER`.
+*   **Safety**: Evaluated by a deterministic AST parser (`src/lib/formulaEngine.ts`) without `eval`/`Function`, with automatic cycle detection (`#CYCLE!`) and division-by-zero handling (`#DIV/0!`).
+
+## Saved Views & Row Density Switcher
+
+*   **Saved Views (`enableSavedViews`, `savedViews`)**: Captures and restores a `GridViewStateSnapshot` containing `globalFilter`, `columnFilters`, `multiSortConfig`, `groupedBy`, `visibleColumns`, `columnOrder`, `pinnedColumns`, `columnWidths`, `pivotMode`, `pivotColumns`, `pivotValues`, `floatingFiltersOpen`, `density`, `pageSize`, and `formulaColumns`.
+*   **Row Density (`density`, `enableDensitySelector`)**: Switches between `compact` (`32px`), `normal` (`48px`), and `comfortable` (`58px`) row spacing.
 
 
 ## Multi-Column Sorting

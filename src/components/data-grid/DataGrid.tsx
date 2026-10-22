@@ -6,6 +6,9 @@ import type {
   DataGridProps,
   DataGridState,
   FilterValue,
+  FormulaColumnConfig,
+  GridDensity,
+  GridViewPreset,
   HierarchicalData,
   PivotValueConfig,
   ProcessedRow,
@@ -27,11 +30,20 @@ import { DataGridPagination } from './DataGridPagination';
 import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { DataGridGroupingPanel } from './DataGridGroupingPanel';
 import { DataGridPivotPanel } from './DataGridPivotPanel';
+import { DataGridFormulaDialog } from './DataGridFormulaDialog';
+import { DataGridViewsMenu, DataGridDensitySelector } from './DataGridViewsMenu';
 import { DataGridStatusBar } from './DataGridStatusBar';
 import { DataGridFindBar } from './DataGridFindBar';
 import { Sparkline } from './Sparkline';
 import { RangeChartDialog } from './RangeChartDialog';
 import { extractRangeChartData, type RangeChartData } from '@/lib/rangeChart';
+import { applyFormulaColumnsToRows } from '@/lib/formulaEngine';
+import {
+  applyGridViewSnapshot,
+  createGridViewSnapshot,
+  getDensityRowMetrics,
+  mergeSavedViews,
+} from '@/lib/savedViews';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronRight, ChevronDown, Columns3, FileDown, FilterX, GripVertical, ListFilter, Search } from 'lucide-react';
@@ -108,6 +120,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   enablePivotToggle,
   pivotColumns = [],
   pivotValues,
+  density = 'normal',
+  enableDensitySelector = true,
+  onDensityChange,
+  enableSavedViews = true,
+  savedViews = [],
+  onSavedViewsChange,
+  enableFormulaColumns = true,
+  formulaColumns: initialFormulaColumns = [],
+  onFormulaColumnsChange,
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -126,6 +147,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const allFieldsFromDefs = initialColumnDefs.map(col => col.field);
     const initialVisibleColumnsFromDefs = initialColumnDefs.map(col => col.field);
 
+    const initialDynamicFields = (initialFormulaColumns || [])
+      .map(fc => fc.field as keyof TData & string)
+      .filter(f => !allFieldsFromDefs.includes(f));
+    const combinedInitialFields = [...allFieldsFromDefs, ...initialDynamicFields];
+
     initialColumnDefs.forEach(col => {
       defaultWidths[col.field] = col.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
       if (col.pinned === 'left') {
@@ -134,8 +160,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         initialPinnedRightFromDefs.push(col.field);
       }
     });
+    initialDynamicFields.forEach(field => {
+      defaultWidths[field] = `${DEFAULT_COL_WIDTH}px`;
+    });
 
-    const unpinnedColumnOrderFromDefs = allFieldsFromDefs.filter(
+    const unpinnedColumnOrderFromDefs = combinedInitialFields.filter(
       field => !initialPinnedLeftFromDefs.includes(field) && !initialPinnedRightFromDefs.includes(field)
     );
 
@@ -146,7 +175,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       multiSortConfig: [],
       globalFilter: '',
       columnFilters: {},
-      visibleColumns: initialVisibleColumnsFromDefs,
+      visibleColumns: [...initialVisibleColumnsFromDefs, ...initialDynamicFields],
       selectedRows: new Set<string | number>(),
       columnOrder: unpinnedColumnOrderFromDefs,
       columnWidths: defaultWidths,
@@ -163,10 +192,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       pivotColumns,
       pivotValues: pivotValues && pivotValues.length > 0 ? pivotValues : deriveDefaultPivotValues(initialColumnDefs),
       floatingFiltersOpen: enableFloatingFilters,
+      density,
+      formulaColumns: initialFormulaColumns || [],
+      activeViewId: null,
     };
   });
 
-  // Sync controlled props when parent toggles pivotMode or enableFloatingFilters
+  // Sync controlled props when parent toggles pivotMode, enableFloatingFilters, or density
   React.useEffect(() => {
     setState(prev => (prev.pivotMode === pivotMode ? prev : { ...prev, pivotMode, currentPage: 1 }));
   }, [pivotMode]);
@@ -178,6 +210,24 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         : { ...prev, floatingFiltersOpen: enableFloatingFilters }
     );
   }, [enableFloatingFilters]);
+
+  React.useEffect(() => {
+    setState(prev => (prev.density === density ? prev : { ...prev, density }));
+  }, [density]);
+
+  const [userSavedViews, setUserSavedViews] = React.useState<GridViewPreset<TData>[]>([]);
+  const viewsStorageKey = `${storageKey}_views`;
+
+  const allSavedViews = React.useMemo(
+    () => mergeSavedViews(savedViews, userSavedViews),
+    [savedViews, userSavedViews]
+  );
+
+  const densityMetrics = React.useMemo(
+    () => getDensityRowMetrics(state.density || 'normal'),
+    [state.density]
+  );
+  const effectiveRowHeight = rowHeight !== 44 ? rowHeight : densityMetrics.defaultRowHeight;
 
   const isPivotActive = !!state.pivotMode && !isTreeData;
   const masterDetail = !!detailRenderer && !isPivotActive;
@@ -223,11 +273,29 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
+      const savedViewsStr = localStorage.getItem(viewsStorageKey);
+      if (savedViewsStr) {
+        try {
+          const parsedViews = JSON.parse(savedViewsStr);
+          if (Array.isArray(parsedViews)) {
+            setUserSavedViews(parsedViews);
+          }
+        } catch (err) {
+          console.error("Error loading saved views from localStorage:", err);
+        }
+      }
+
       const savedStateString = localStorage.getItem(storageKey);
       if (savedStateString) {
         try {
           const savedState = JSON.parse(savedStateString);
-          const currentFieldsSet = new Set(initialColumnDefs.map(col => col.field));
+          const restoredFormulaCols: FormulaColumnConfig[] = Array.isArray(savedState.formulaColumns)
+            ? savedState.formulaColumns
+            : initialFormulaColumns || [];
+          const currentFieldsSet = new Set<keyof TData & string>([
+            ...initialColumnDefs.map(col => col.field),
+            ...restoredFormulaCols.map(fc => fc.field as keyof TData & string),
+          ]);
 
           let reconciledVisibleColumns = (savedState.visibleColumns || [])
             .filter((field: keyof TData & string) => currentFieldsSet.has(field));
@@ -238,8 +306,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               }
             }
           });
+          restoredFormulaCols.forEach(fc => {
+            const field = fc.field as keyof TData & string;
+            if (!reconciledVisibleColumns.includes(field)) {
+              reconciledVisibleColumns.push(field);
+            }
+          });
           if (reconciledVisibleColumns.length === 0 && initialColumnDefs.length > 0) {
-             reconciledVisibleColumns = initialColumnDefs.map(col => col.field);
+             reconciledVisibleColumns = Array.from(currentFieldsSet);
           }
 
           const reconciledPinnedLeft = (savedState.pinnedColumns?.left || [])
@@ -260,11 +334,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                                                  !reconciledPinnedLeft.includes(field) &&
                                                  !reconciledPinnedRight.includes(field));
 
-          initialColumnDefs.forEach(colDef => {
-            if (!reconciledPinnedLeft.includes(colDef.field) &&
-                !reconciledPinnedRight.includes(colDef.field) &&
-                !reconciledUnpinnedOrder.includes(colDef.field)) {
-              reconciledUnpinnedOrder.push(colDef.field);
+          currentFieldsSet.forEach(field => {
+            if (!reconciledPinnedLeft.includes(field) &&
+                !reconciledPinnedRight.includes(field) &&
+                !reconciledUnpinnedOrder.includes(field)) {
+              reconciledUnpinnedOrder.push(field);
             }
           });
           
@@ -316,6 +390,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                   ? savedPivotVals
                   : prevState.pivotValues,
             floatingFiltersOpen: enableFloatingFilters || !!savedState.floatingFiltersOpen,
+            density: savedState.density || density || 'normal',
+            formulaColumns: restoredFormulaCols,
+            activeViewId: savedState.activeViewId || null,
             currentPage: 1, 
             focusedCell: null,
           }));
@@ -345,6 +422,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         pivotColumns: state.pivotColumns,
         pivotValues: state.pivotValues,
         floatingFiltersOpen: state.floatingFiltersOpen,
+        density: state.density,
+        formulaColumns: state.formulaColumns,
+        activeViewId: state.activeViewId,
       };
       localStorage.setItem(storageKey, JSON.stringify(stateToSave));
     }
@@ -365,12 +445,62 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     state.pivotColumns,
     state.pivotValues,
     state.floatingFiltersOpen,
+    state.density,
+    state.formulaColumns,
+    state.activeViewId,
   ]);
 
   const treeColumn = specifiedTreeColumn || (initialColumnDefs.length > 0 ? initialColumnDefs[0].field : undefined);
 
+  const combinedColumnDefs = React.useMemo<ColumnDefinition<TData>[]>(() => {
+    const baseFields = new Set(initialColumnDefs.map(c => String(c.field)));
+    const dynamicCols: ColumnDefinition<TData>[] = (state.formulaColumns || [])
+      .filter(fc => !baseFields.has(fc.field))
+      .map(fc => ({
+        field: fc.field as keyof TData & string,
+        headerText: fc.headerText,
+        formula: fc.formula,
+        aggregate: fc.aggregate,
+        filterType: fc.filterType || 'number',
+        sortable: true,
+        filterable: true,
+        hideable: true,
+        editable: false,
+        groupable: true,
+        pivotable: true,
+        defaultWidth: '150px',
+      }));
+
+    const updatedBase = initialColumnDefs.map(col => {
+      const override = (state.formulaColumns || []).find(fc => fc.field === String(col.field));
+      return override
+        ? {
+            ...col,
+            headerText: override.headerText,
+            formula: override.formula,
+            aggregate: override.aggregate ?? col.aggregate,
+          }
+        : col;
+    });
+
+    return [...updatedBase, ...dynamicCols];
+  }, [initialColumnDefs, state.formulaColumns]);
+
+  const activeFormulaSpecs = React.useMemo(
+    () =>
+      combinedColumnDefs
+        .filter(c => !!c.formula)
+        .map(c => ({ field: String(c.field), formula: c.formula! })),
+    [combinedColumnDefs]
+  );
+
+  const dataWithFormulas = React.useMemo(
+    () => applyFormulaColumnsToRows(initialData || [], activeFormulaSpecs, isTreeData),
+    [initialData, activeFormulaSpecs, isTreeData]
+  );
+
   const getUniqueColumnValues = React.useCallback((field: keyof TData & string): string[] => {
-    if (!initialData) return [];
+    if (!dataWithFormulas) return [];
     const uniqueValues = new Set<string>();
     const traverse = (items: TData[]) => {
       items.forEach(row => {
@@ -383,13 +513,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         }
       });
     };
-    traverse(initialData);
+    traverse(dataWithFormulas);
     return Array.from(uniqueValues).sort();
-  }, [initialData, isTreeData]);
+  }, [dataWithFormulas, isTreeData]);
 
   const getDateTreeBuckets = React.useCallback((field: keyof TData & string) => {
     const monthsByYear = new Map<string, Set<string>>();
-    (initialData || []).forEach(row => {
+    (dataWithFormulas || []).forEach(row => {
       const parts = dateTreeKeyOf(getCellValue({ originalRow: row } as ProcessedRow<TData>, field));
       if (!parts) return;
       if (!monthsByYear.has(parts.year)) monthsByYear.set(parts.year, new Set());
@@ -398,10 +528,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     return Array.from(monthsByYear.entries())
       .sort((a, b) => Number(b[0]) - Number(a[0]))
       .map(([year, months]) => ({ year, months: Array.from(months).sort() }));
-  }, [initialData]);
+  }, [dataWithFormulas]);
 
   const processedColumnDefs = React.useMemo(() => {
-    return initialColumnDefs.map(colDef => {
+    return combinedColumnDefs.map(colDef => {
       if (colDef.filterable && colDef.filterType === 'select' && !colDef.filterOptions) {
         return {
           ...colDef,
@@ -413,7 +543,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       }
       return colDef;
     });
-  }, [initialColumnDefs, getUniqueColumnValues, getDateTreeBuckets]);
+  }, [combinedColumnDefs, getUniqueColumnValues, getDateTreeBuckets]);
 
   const colDefsMap = React.useMemo(() => new Map(processedColumnDefs.map(col => [col.field, col])), [processedColumnDefs]);
 
@@ -443,16 +573,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   const baseDataForProcessing = React.useMemo<ProcessedRow<TData>[]>(() => {
     if (isTreeData) {
-      return flattenTreeData(initialData || [], state.expandedRows);
+      return flattenTreeData(dataWithFormulas || [], state.expandedRows);
     }
-    return (initialData || []).map(item => ({
+    return (dataWithFormulas || []).map(item => ({
       originalRow: item,
       id: item.id,
       level: 0,
       hasChildren: false,
       isExpanded: false,
     }));
-  }, [initialData, isTreeData, flattenTreeData, state.expandedRows]);
+  }, [dataWithFormulas, isTreeData, flattenTreeData, state.expandedRows]);
 
   const handleSort = (field: keyof TData & string, multiSort = false) => {
     setState((prevState) => {
@@ -691,6 +821,164 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       groupedBy: prevState.groupedBy.filter(f => f !== field),
       currentPage: 1,
       expandedGroups: new Set(),
+    }));
+  };
+
+  // ---- Formula Columns, Row Density & Saved Views handlers ----
+  const handleDensityChange = (nextDensity: GridDensity) => {
+    setState(prev => ({ ...prev, density: nextDensity }));
+    onDensityChange?.(nextDensity);
+  };
+
+  const handleSaveFormulaColumn = (
+    col: FormulaColumnConfig,
+    previousField?: string
+  ) => {
+    setState(prev => {
+      const currentFormulas = prev.formulaColumns || [];
+      const targetField = previousField || col.field;
+      const existsIdx = currentFormulas.findIndex(fc => fc.field === targetField);
+      const nextFormulas =
+        existsIdx >= 0
+          ? currentFormulas.map((fc, idx) => (idx === existsIdx ? col : fc))
+          : [...currentFormulas, col];
+
+      const typedField = col.field as keyof TData & string;
+      const nextVisible = prev.visibleColumns.includes(typedField)
+        ? prev.visibleColumns
+        : [...prev.visibleColumns, typedField];
+      const nextOrder =
+        prev.columnOrder.includes(typedField) ||
+        prev.pinnedColumns.left.includes(typedField) ||
+        prev.pinnedColumns.right.includes(typedField)
+          ? prev.columnOrder
+          : [...prev.columnOrder, typedField];
+      const nextWidths = {
+        ...prev.columnWidths,
+        [typedField]: prev.columnWidths[typedField] || `${DEFAULT_COL_WIDTH}px`,
+      };
+
+      onFormulaColumnsChange?.(nextFormulas);
+      return {
+        ...prev,
+        formulaColumns: nextFormulas,
+        visibleColumns: nextVisible,
+        columnOrder: nextOrder,
+        columnWidths: nextWidths,
+      };
+    });
+  };
+
+  const handleRemoveFormulaColumn = (field: string) => {
+    setState(prev => {
+      const nextFormulas = (prev.formulaColumns || []).filter(fc => fc.field !== field);
+      const nextColumnFilters = { ...prev.columnFilters };
+      delete nextColumnFilters[field];
+      onFormulaColumnsChange?.(nextFormulas);
+      return {
+        ...prev,
+        formulaColumns: nextFormulas,
+        visibleColumns: prev.visibleColumns.filter(f => String(f) !== field),
+        columnOrder: prev.columnOrder.filter(f => String(f) !== field),
+        pinnedColumns: {
+          left: prev.pinnedColumns.left.filter(f => String(f) !== field),
+          right: prev.pinnedColumns.right.filter(f => String(f) !== field),
+        },
+        groupedBy: prev.groupedBy.filter(f => String(f) !== field),
+        pivotColumns: (prev.pivotColumns || []).filter(f => String(f) !== field),
+        pivotValues: (prev.pivotValues || []).filter(v => String(v.field) !== field),
+        columnFilters: nextColumnFilters,
+      };
+    });
+  };
+
+  const persistUserSavedViews = (nextViews: GridViewPreset<TData>[]) => {
+    setUserSavedViews(nextViews);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(viewsStorageKey, JSON.stringify(nextViews));
+    }
+    onSavedViewsChange?.(mergeSavedViews(savedViews, nextViews));
+  };
+
+  const handleApplySavedView = (view: GridViewPreset<TData>) => {
+    setState(prev => {
+      const next = applyGridViewSnapshot(
+        prev,
+        view.state,
+        initialColumnDefs.map(c => String(c.field)),
+        defaultPageSize
+      );
+      return { ...next, activeViewId: view.id };
+    });
+  };
+
+  const handleSaveNewView = (name: string) => {
+    const newView: GridViewPreset<TData> = {
+      id: `view_${Date.now()}`,
+      name,
+      createdAt: new Date().toISOString(),
+      builtIn: false,
+      state: createGridViewSnapshot(state),
+    };
+    const nextUserViews = [...userSavedViews, newView];
+    persistUserSavedViews(nextUserViews);
+    setState(prev => ({ ...prev, activeViewId: newView.id }));
+  };
+
+  const handleUpdateSavedView = (viewId: string) => {
+    const nextUserViews = userSavedViews.map(v =>
+      v.id === viewId ? { ...v, state: createGridViewSnapshot(state) } : v
+    );
+    persistUserSavedViews(nextUserViews);
+    setState(prev => ({ ...prev, activeViewId: viewId }));
+  };
+
+  const handleDeleteSavedView = (viewId: string) => {
+    const nextUserViews = userSavedViews.filter(v => v.id !== viewId);
+    persistUserSavedViews(nextUserViews);
+    setState(prev =>
+      prev.activeViewId === viewId ? { ...prev, activeViewId: null } : prev
+    );
+  };
+
+  const handleResetDefaultLayout = () => {
+    const defaultWidths = {} as Record<keyof TData & string, string | number>;
+    const initialPinnedLeft: (keyof TData & string)[] = [];
+    const initialPinnedRight: (keyof TData & string)[] = [];
+    const allFields = initialColumnDefs.map(c => c.field);
+    initialColumnDefs.forEach(col => {
+      defaultWidths[col.field] = col.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
+      if (col.pinned === 'left') initialPinnedLeft.push(col.field);
+      else if (col.pinned === 'right') initialPinnedRight.push(col.field);
+    });
+    const unpinnedOrder = allFields.filter(
+      f => !initialPinnedLeft.includes(f) && !initialPinnedRight.includes(f)
+    );
+    setState(prev => ({
+      ...prev,
+      currentPage: 1,
+      pageSize: defaultPageSize,
+      sortConfig: null,
+      multiSortConfig: [],
+      globalFilter: '',
+      columnFilters: {},
+      visibleColumns: allFields,
+      columnOrder: unpinnedOrder,
+      columnWidths: defaultWidths,
+      pinnedColumns: { left: initialPinnedLeft, right: initialPinnedRight },
+      groupedBy: [],
+      expandedGroups: new Set(),
+      pivotMode,
+      pivotColumns,
+      pivotValues:
+        pivotValues && pivotValues.length > 0
+          ? pivotValues
+          : deriveDefaultPivotValues(initialColumnDefs),
+      floatingFiltersOpen: enableFloatingFilters,
+      density,
+      formulaColumns: initialFormulaColumns || [],
+      activeViewId: null,
+      focusedCell: null,
     }));
   };
 
@@ -1120,10 +1408,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const offsets = new Array<number>(displayRows.length + 1);
     offsets[0] = 0;
     for (let i = 0; i < displayRows.length; i++) {
-      offsets[i + 1] = offsets[i] + (displayRows[i].isDetail ? detailRowHeight : rowHeight);
+      offsets[i + 1] = offsets[i] + (displayRows[i].isDetail ? detailRowHeight : effectiveRowHeight);
     }
     return offsets;
-  }, [virtualized, displayRows, rowHeight, detailRowHeight]);
+  }, [virtualized, displayRows, effectiveRowHeight, detailRowHeight]);
 
   const { visibleDisplayRows, topSpacer, bottomSpacer } = React.useMemo(() => {
     if (!virtualized || !rowOffsets) {
@@ -2080,6 +2368,32 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               Pivot Mode
             </Button>
           )}
+          {enableFormulaColumns && !isPivotActive && (
+            <DataGridFormulaDialog
+              allColumns={processedColumnDefs}
+              formulaColumns={state.formulaColumns || []}
+              sampleRow={dataWithFormulas?.[0]}
+              onSaveFormulaColumn={handleSaveFormulaColumn}
+              onRemoveFormulaColumn={handleRemoveFormulaColumn}
+            />
+          )}
+          {enableSavedViews && (
+            <DataGridViewsMenu
+              views={allSavedViews}
+              activeViewId={state.activeViewId || null}
+              onApplyView={handleApplySavedView}
+              onSaveNewView={handleSaveNewView}
+              onUpdateView={handleUpdateSavedView}
+              onDeleteView={handleDeleteSavedView}
+              onResetDefaultLayout={handleResetDefaultLayout}
+            />
+          )}
+          {enableDensitySelector && (
+            <DataGridDensitySelector
+              density={state.density || 'normal'}
+              onDensityChange={handleDensityChange}
+            />
+          )}
           {enableFind && (
             <Button variant="outline" size="sm" onClick={() => setFindOpen(true)} aria-label="Find in grid (Ctrl+F)">
               <Search className="mr-2 h-4 w-4" />
@@ -2408,7 +2722,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                     <TableRow key={row.id} className="group-header-row">
                       <TableCell
                         colSpan={totalColSpan}
-                        className="px-3 py-2 cursor-pointer"
+                        className={cn(densityMetrics.groupCellPaddingClass, "cursor-pointer")}
                         onClick={() => row.groupKey && handleToggleExpandGroup(row.groupKey)}
                       >
                         <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
@@ -2553,7 +2867,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         id={`cell-${row.id}-${colDef.field}`}
                         data-field={colDef.field}
                         className={cn(
-                          "px-3 py-2 truncate",
+                          densityMetrics.cellPaddingClass,
+                          "truncate",
                           colDef.editable && "cursor-pointer",
                           (isLeftPinned || isRightPinned) && "sticky-body-cell",
                           isFillCorner && !isLeftPinned && !isRightPinned && "relative",
