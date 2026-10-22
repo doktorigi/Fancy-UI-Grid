@@ -5,10 +5,13 @@ import {
   buildHeaderGroupSpans,
   computeAggregate,
   computeFillValues,
+  computeNextSortConfigs,
   computeRangeStats,
   filterRows,
   findCellMatches,
+  formatFloatingNumberFilter,
   parseClipboardText,
+  parseFloatingNumberFilter,
   sortRows,
   toStrictNumber,
 } from './gridProcessing';
@@ -150,6 +153,106 @@ test('sortRows leaves tree data out of grouped precedence', () => {
   assert.deepEqual(
     rowIds(sortRows(unsortedRows, columns, sortBy('amount', 'asc'), ['group'], true)),
     [3, 1, 2]
+  );
+});
+
+test('sortRows supports multi-column SortConfig[] tie-breaking in priority order', () => {
+  const unsortedRows = [
+    row({ id: 1, group: 'B', name: 'Bob', amount: 10 }),
+    row({ id: 2, group: 'A', name: 'Alice', amount: 20 }),
+    row({ id: 3, group: 'A', name: 'Alice', amount: 50 }),
+    row({ id: 4, group: 'A', name: 'Charlie', amount: 5 }),
+    row({ id: 5, group: 'B', name: 'Bob', amount: 30 }),
+  ];
+
+  const sorted = sortRows(unsortedRows, columns, [
+    sortBy('group', 'asc'),
+    sortBy('name', 'asc'),
+    sortBy('amount', 'desc'),
+  ]);
+  assert.deepEqual(rowIds(sorted), [3, 2, 4, 5, 1]);
+});
+
+test('computeNextSortConfigs handles plain click and Shift+click multi-sort transitions', () => {
+  // Plain click cycles asc -> desc -> empty
+  let s = computeNextSortConfigs<Row>([], 'name', false);
+  assert.deepEqual(s, [{ field: 'name', direction: 'asc' }]);
+  s = computeNextSortConfigs(s, 'name', false);
+  assert.deepEqual(s, [{ field: 'name', direction: 'desc' }]);
+  s = computeNextSortConfigs(s, 'name', false);
+  assert.deepEqual(s, []);
+
+  // Shift+click appends second column, toggles its direction, then removes it
+  s = computeNextSortConfigs<Row>([{ field: 'group', direction: 'asc' }], 'amount', true);
+  assert.deepEqual(s, [
+    { field: 'group', direction: 'asc' },
+    { field: 'amount', direction: 'asc' },
+  ]);
+  s = computeNextSortConfigs(s, 'amount', true);
+  assert.deepEqual(s, [
+    { field: 'group', direction: 'asc' },
+    { field: 'amount', direction: 'desc' },
+  ]);
+  s = computeNextSortConfigs(s, 'amount', true);
+  assert.deepEqual(s, [{ field: 'group', direction: 'asc' }]);
+
+  // Plain click when multiple columns are sorted replaces with single-column asc
+  const multi: SortConfig<Row>[] = [
+    { field: 'group', direction: 'asc' },
+    { field: 'amount', direction: 'desc' },
+  ];
+  assert.deepEqual(computeNextSortConfigs(multi, 'name', false), [
+    { field: 'name', direction: 'asc' },
+  ]);
+});
+
+test('parseFloatingNumberFilter and formatFloatingNumberFilter support comparisons and ranges', () => {
+  assert.deepEqual(parseFloatingNumberFilter('> 100'), {
+    type: 'number',
+    operator: '>',
+    value: 100,
+  });
+  assert.deepEqual(parseFloatingNumberFilter('<=50.5'), {
+    type: 'number',
+    operator: '<=',
+    value: 50.5,
+  });
+  assert.deepEqual(parseFloatingNumberFilter('!= 0'), {
+    type: 'number',
+    operator: '!=',
+    value: 0,
+  });
+  assert.deepEqual(parseFloatingNumberFilter('10..25'), {
+    type: 'number',
+    operator: 'between',
+    value: 10,
+    value2: 25,
+  });
+  assert.deepEqual(parseFloatingNumberFilter('25 - 10'), {
+    type: 'number',
+    operator: 'between',
+    value: 10,
+    value2: 25,
+  });
+  assert.deepEqual(parseFloatingNumberFilter('42', '>='), {
+    type: 'number',
+    operator: '>=',
+    value: 42,
+  });
+  assert.equal(parseFloatingNumberFilter(''), undefined);
+  assert.equal(parseFloatingNumberFilter('abc'), undefined);
+
+  assert.equal(
+    formatFloatingNumberFilter({ type: 'number', operator: '>', value: 100 }),
+    '>100'
+  );
+  assert.equal(
+    formatFloatingNumberFilter({ type: 'number', operator: '=', value: 42 }),
+    '42'
+  );
+  assert.equal(
+    formatFloatingNumberFilter({ type: 'number', operator: 'between', value: 10, value2: 25 }),
+    '10..25'
   );
 });
 

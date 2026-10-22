@@ -23,6 +23,11 @@ def fancy_ui_grid(
     page_size_options=None,
     enable_row_selection=True,
     enable_grouping_panel=False,
+    enable_floating_filters=False,
+    pivot_mode=False,
+    enable_pivot_toggle=None,
+    pivot_columns=None,
+    pivot_values=None,
     is_tree_data=False,
     tree_column=None,
     storage_key=None,
@@ -45,6 +50,11 @@ def fancy_ui_grid(
         page_size_options: Page size choices, default [10, 25, 50, 100].
         enable_row_selection: Show selection checkboxes.
         enable_grouping_panel: Show the drag-to-group panel.
+        enable_floating_filters: Show an inline quick-filter row beneath headers.
+        pivot_mode: Start in interactive Pivot Table Mode.
+        enable_pivot_toggle: Show the Pivot Mode toggle button in the toolbar.
+        pivot_columns: List of column field names to pivot into dynamic headers.
+        pivot_values: List of ``{"field": ..., "aggregate": ...}`` dicts for pivot metrics.
         is_tree_data: Render hierarchical rows (dicts with ``children``).
         tree_column: Field that shows the tree expanders.
         storage_key: localStorage key for persisted grid state; set a
@@ -56,7 +66,7 @@ def fancy_ui_grid(
         key: Streamlit widget key.
 
     Returns:
-        dict with ``selected_ids``, ``edits``, and ``server_params`` (page, pageSize, sortConfig, columnFilters, globalFilter).
+        dict with ``selected_ids``, ``edits``, and ``server_params`` (page, pageSize, sortConfig, multiSortConfig, columnFilters, globalFilter).
     """
     if hasattr(data, "to_json"):  # pandas DataFrame, without importing pandas
         records = json.loads(data.to_json(orient="records", date_format="iso"))
@@ -71,6 +81,11 @@ def fancy_ui_grid(
         page_size_options=page_size_options or [10, 25, 50, 100],
         enable_row_selection=enable_row_selection,
         enable_grouping_panel=enable_grouping_panel,
+        enable_floating_filters=enable_floating_filters,
+        pivot_mode=pivot_mode,
+        enable_pivot_toggle=enable_pivot_toggle,
+        pivot_columns=pivot_columns or [],
+        pivot_values=pivot_values,
         is_tree_data=is_tree_data,
         tree_column=tree_column,
         storage_key=storage_key,

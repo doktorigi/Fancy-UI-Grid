@@ -9,9 +9,11 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 
 ## Features
 
-* **Column Sorting** — click column headers to sort data.
+* **Single & Multi-Column Sorting** — click column headers to cycle `asc → desc → none`, or **Shift+Click** multiple headers to sort by multiple columns in priority order with numbered badges (`1`, `2`, `3`…).
+* **Floating Filter Row (Quick Filters)** — set `enableFloatingFilters` (or toggle **Quick Filters** in the toolbar) to display an inline filter row directly beneath headers supporting instant substring search, numeric comparisons/ranges (`>100`, `<=50`, `10..50`), dropdowns, and date buckets.
+* **Interactive Pivot Table Mode** — set `pivotMode` (or toggle **Pivot Mode** in the toolbar) to cross-tabulate row groups against dynamic pivot columns with a drag-and-drop Pivot Panel (Rows, Columns, Values), multi-metric aggregations (`sum`, `avg`, `min`, `max`, `count`), and Row + Column Grand Totals.
 * **Row Selection** — checkboxes per row, plus "select all on page".
-* **Column Resizing** — drag header borders to resize columns.
+* **Column Resizing** — drag header borders to resize columns, or double-click a border to auto-fit content.
 * **Global Search (Quick Filter)** — filter across all visible columns, or restrict it to specific fields with `globalFilterFields`.
 * **Per-Column Filtering** — Text, Numeric (`=`, `!=`, `<`, `<=`, `>`, `>=`, `between`), Date (presets like "Today", "Last 7 days", plus custom ranges), searchable Multi-Select checkbox lists, Date Tree (year → month checkboxes), and Boolean filter types in a popover UI.
 * **Row Styling** — `getRowStyle` callback returns inline styles per data row (e.g. status-colored rows); the background carries onto pinned cells so it isn't masked while scrolling.
@@ -30,11 +32,11 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 * **Row Grouping** — drag a column header to the grouping panel to group rows, with expand/collapse.
 * **Group & Multi-Aggregations** — declare `aggregate: 'sum' | 'avg' | 'min' | 'max' | 'count'` or an array of metrics `['sum', 'avg']` on a column, and the group header & footer show multi-metric summaries.
 * **Declarative Conditional Formatting** — specify conditional format rules (`ConditionalFormatRule`), color scales (min/max gradient interpolation), and progress data bars (`linear-gradient`) directly via props without custom JS renderers.
-* **Server-Side Data Operations** — set `serverSide` with `totalRowCount` and `onServerParamsChange` to bypass client-side processing and stream pagination, sorting, and filtering state to host backends or SQL engines.
+* **Server-Side Data Operations** — set `serverSide` with `totalRowCount` and `onServerParamsChange` to bypass client-side processing and stream pagination, single/multi-column sorting, and filtering state to host backends or SQL engines.
 * **Tree Data** — render hierarchical parent/child data with expand/collapse and indentation.
 * **Copy to Clipboard** — Ctrl/Cmd+C copies the focused cell, or all selected rows (with headers) as tab-separated text ready to paste into a spreadsheet.
-* **Export to CSV & XLSX** — exports the current filtered/sorted view, with CSV formula-injection protection.
-* **Grid State Persistence** — column widths, order, pins, filters, sort, page size, visibility, and grouping are saved to `localStorage` (configurable key per grid instance).
+* **Export to CSV & XLSX** — exports the current filtered/sorted view (or pivoted cross-tab table), with CSV formula-injection protection.
+* **Grid State Persistence** — column widths, order, pins, filters, multi-sort, pivot configuration, page size, visibility, and grouping are saved to `localStorage` (configurable key per grid instance).
 * **Fill Handle** — drag the square at the corner of a range selection to fill editable cells below/above/beside it: constant-step numeric sources extend as a series (1, 2 → 3, 4, …), everything else repeats. On by default when `onCellEdit` is provided (`enableFillHandle`).
 * **Clipboard Paste** — Ctrl/Cmd+V pastes TSV (straight from Excel or another grid) into editable cells starting at the selection; a single copied value fills the whole selected range. On by default with `onCellEdit` (`enableClipboardPaste`).
 * **Undo / Redo** — Ctrl/Cmd+Z and Ctrl/Cmd+Y (or Ctrl+Shift+Z) walk back and reapply grid-driven edits — inline edits, pastes, and fills each undo as one batch. On by default with `onCellEdit` (`enableUndoRedo`).
@@ -56,7 +58,7 @@ npm install
 npm run dev
 ```
 
-The demo app starts on `http://localhost:9002`. The grid is showcased in the "Repricing Results" view (`src/components/bulk-repricing/ResultsView.tsx`).
+The demo app starts on `http://localhost:9002`. The grid is showcased on the home page (`src/app/page.tsx`) and in the "Repricing Results" view (`src/components/bulk-repricing/ResultsView.tsx`).
 
 ## Using the Grid in Your Own Project
 
@@ -65,7 +67,7 @@ The grid is distributed ShadCN-style: copy the source into your project rather t
 1. **Copy these files** into your Next.js/React + Tailwind project:
    * `src/components/data-grid/` (the whole folder)
    * `src/types/data-grid.ts`
-   * `src/lib/utils.ts` and `src/lib/exportUtils.ts`
+   * `src/lib/utils.ts`, `src/lib/gridProcessing.ts`, `src/lib/pivotTable.ts`, `src/lib/conditionalFormatting.ts`, `src/lib/rangeChart.ts`, `src/lib/sparkline.ts`, and `src/lib/exportUtils.ts`
    * The grid-specific styles from `src/app/globals.css` (the `.sticky-header-cell`, `.sticky-body-cell`, `.pinned-*-shadow`, `.cell-focused`, `.group-header-row`, and column-drag rules)
 
 2. **Install the npm dependencies** the grid uses:
@@ -86,10 +88,11 @@ The grid is distributed ShadCN-style: copy the source into your project rather t
    import { DataGrid } from '@/components/data-grid/DataGrid';
    import type { ColumnDefinition } from '@/types/data-grid';
 
-   interface Person { id: number; name: string; age: number; salary: number; }
+   interface Person { id: number; name: string; department: string; age: number; salary: number; }
 
    const columns: ColumnDefinition<Person>[] = [
      { field: 'name', headerText: 'Name', sortable: true, filterable: true, filterType: 'text' },
+     { field: 'department', headerText: 'Department', sortable: true, filterable: true, filterType: 'select' },
      { field: 'age', headerText: 'Age', sortable: true, filterable: true, filterType: 'number', aggregate: 'avg' },
      {
        field: 'salary', headerText: 'Salary', sortable: true, aggregate: 'sum',
@@ -104,6 +107,8 @@ The grid is distributed ShadCN-style: copy the source into your project rather t
          columnDefs={columns}
          enableRowSelection
          enableGroupingPanel
+         enableFloatingFilters
+         enablePivotToggle
          storageKey="peopleGrid"
        />
      );
@@ -114,7 +119,7 @@ See [`API_REFERENCE.md`](API_REFERENCE.md) for every prop and column option.
 
 ## Using the Grid in Streamlit
 
-The grid is also available as a Streamlit custom component — selection and cell edits flow back to Python:
+The grid is also available as a Streamlit custom component — selection, cell edits, and server parameters flow back to Python:
 
 ```bash
 pip install "git+https://github.com/doktorigi/Fancy-UI-Grid.git#subdirectory=streamlit-component"
@@ -122,15 +127,23 @@ pip install "git+https://github.com/doktorigi/Fancy-UI-Grid.git#subdirectory=str
 
 ```python
 from fancy_ui_grid import fancy_ui_grid
-result = fancy_ui_grid(data, column_defs, key="grid")  # data: list of dicts or DataFrame
+result = fancy_ui_grid(
+    data,
+    column_defs,
+    enable_floating_filters=True,
+    enable_pivot_toggle=True,
+    key="grid",
+)
 ```
 
 See [`streamlit-component/README.md`](streamlit-component/README.md) for details.
 
-## Keyboard Shortcuts
+## Keyboard & Mouse Shortcuts
 
-| Keys | Action |
+| Keys / Action | Description |
 | --- | --- |
+| Click column header | Cycle single-column sort (`asc → desc → none`) |
+| Shift + Click column header | Add/toggle column in multi-column sort with priority badge (`1`, `2`, `3`…) |
 | Arrow keys | Move cell focus |
 | Shift + Arrow keys | Extend the cell range selection |
 | Space | Select/deselect row, or toggle tree node / group |

@@ -1,4 +1,3 @@
-
 import * as React from 'react';
 import type { ColumnDefinition, SortConfig, FilterValue, ActiveFilters } from '@/types/data-grid';
 import { Button } from '@/components/ui/button';
@@ -17,7 +16,8 @@ import { cn } from '@/lib/utils';
 interface DataGridHeaderCellProps<TData> {
   column: ColumnDefinition<TData>;
   sortConfig: SortConfig<TData> | null;
-  onSort: (field: keyof TData & string) => void;
+  multiSortConfig?: SortConfig<TData>[];
+  onSort: (field: keyof TData & string, multiSort?: boolean) => void;
   onFilterChange: (field: keyof TData & string, value?: FilterValue) => void;
   columnFilters: ActiveFilters<TData>;
   currentWidth: string | number;
@@ -41,6 +41,7 @@ const iconMap: { [key: string]: React.ElementType } = {
 export function DataGridHeaderCell<TData>({
   column,
   sortConfig,
+  multiSortConfig,
   onSort,
   onFilterChange,
   columnFilters,
@@ -51,7 +52,15 @@ export function DataGridHeaderCell<TData>({
   currentPinnedState,
   onDragStartColumn,
 }: DataGridHeaderCellProps<TData>) {
-  const isSorted = sortConfig?.field === column.field;
+  const activeSorts =
+    multiSortConfig && multiSortConfig.length > 0
+      ? multiSortConfig
+      : sortConfig
+        ? [sortConfig]
+        : [];
+  const sortIndex = activeSorts.findIndex(s => s.field === column.field);
+  const currentSort = sortIndex >= 0 ? activeSorts[sortIndex] : null;
+  const isSorted = !!currentSort;
   const isFiltered = !!columnFilters[column.field];
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = React.useState(false);
   const IconComponent = column.iconName ? iconMap[column.iconName] : null;
@@ -121,11 +130,11 @@ export function DataGridHeaderCell<TData>({
   return (
     <div 
       className={cn(
-        "flex items-center justify-between group px-3 py-2 h-full w-full", // Changed padding here
+        "flex items-center justify-between group px-3 py-2 h-full w-full",
         isDraggable && "cursor-grab"
       )}
       style={{ position: 'relative' }} 
-      draggable={isDraggable} // Enable draggable attribute on this div
+      draggable={isDraggable}
       onDragStart={(e) => isDraggable && onDragStartColumn(column.field, e)}
     >
       {isDraggable && (
@@ -137,13 +146,22 @@ export function DataGridHeaderCell<TData>({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => onSort(column.field)}
-            className="h-auto px-1 py-0.5 -ml-1 text-left font-semibold flex-grow justify-start hover:bg-accent"
+            onClick={(e) => onSort(column.field, e.shiftKey)}
+            title="Click to sort · Shift+Click to add/toggle multi-column sort"
+            className="h-auto px-1 py-0.5 -ml-1 text-left font-semibold flex-grow justify-start hover:bg-accent min-w-0"
             aria-label={`Sort by ${column.headerText}`}
           >
             {headerContent}
-            {isSorted && sortConfig?.direction === 'asc' && <ArrowUp className="ml-2 h-4 w-4 shrink-0" />}
-            {isSorted && sortConfig?.direction === 'desc' && <ArrowDown className="ml-2 h-4 w-4 shrink-0" />}
+            {isSorted && currentSort?.direction === 'asc' && <ArrowUp className="ml-1.5 h-3.5 w-3.5 shrink-0" />}
+            {isSorted && currentSort?.direction === 'desc' && <ArrowDown className="ml-1.5 h-3.5 w-3.5 shrink-0" />}
+            {isSorted && activeSorts.length > 1 && (
+              <span
+                className="ml-0.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-bold text-primary shrink-0"
+                aria-label={`Sort priority ${sortIndex + 1}`}
+              >
+                {sortIndex + 1}
+              </span>
+            )}
           </Button>
         ) : (
           <div className="px-1 py-0.5 font-semibold flex-grow min-w-0">{headerContent}</div>

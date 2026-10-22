@@ -43,6 +43,8 @@ result = fancy_ui_grid(
     data,
     column_defs,
     enable_grouping_panel=True,
+    enable_floating_filters=True,
+    enable_pivot_toggle=True,
     conditional_formats=conditional_formats,
     storage_key="exampleAppGrid",
     key="demo_grid",

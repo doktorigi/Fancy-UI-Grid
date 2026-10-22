@@ -5,6 +5,7 @@ import type {
   DateFilterValue,
   DateTreeFilterValue,
   HierarchicalData,
+  NumberFilterOperator,
   NumberFilterValue,
   ProcessedRow,
   SortConfig,
@@ -61,6 +62,58 @@ function matchesNumberFilter(cellValue: any, filter: NumberFilterValue): boolean
     default:
       return true;
   }
+}
+
+// Parses inline floating number filter expressions such as ">100", "<= 50", "!= 0",
+// "10..20", "10 - 20", or plain numbers like "42".
+export function parseFloatingNumberFilter(
+  raw: string,
+  fallbackOperator: NumberFilterOperator = '='
+): NumberFilterValue | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+
+  // Range syntax: "10..20" or "10 - 20" (careful not to split a leading negative sign)
+  const rangeMatch = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*(?:\.\.|-)\s*(-?\d+(?:\.\d+)?)$/);
+  if (rangeMatch) {
+    const v1 = parseFloat(rangeMatch[1]);
+    const v2 = parseFloat(rangeMatch[2]);
+    if (!isNaN(v1) && !isNaN(v2)) {
+      return { type: 'number', operator: 'between', value: Math.min(v1, v2), value2: Math.max(v1, v2) };
+    }
+  }
+
+  // Operator prefix syntax: ">= 100", "<=50", "!=0", ">10", "<20", "=5"
+  const opMatch = trimmed.match(/^(>=|<=|!=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);
+  if (opMatch) {
+    const op = opMatch[1] as NumberFilterOperator;
+    const val = parseFloat(opMatch[2]);
+    if (!isNaN(val)) {
+      return { type: 'number', operator: op, value: val };
+    }
+  }
+
+  const plain = parseFloat(trimmed);
+  if (!isNaN(plain) && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    const op = fallbackOperator === 'between' ? '=' : fallbackOperator;
+    return { type: 'number', operator: op, value: plain };
+  }
+
+  return undefined;
+}
+
+export function formatFloatingNumberFilter(filter?: NumberFilterValue): string {
+  if (!filter) return '';
+  if (filter.operator === 'between') {
+    if (filter.value !== undefined && filter.value2 !== undefined) {
+      return `${filter.value}..${filter.value2}`;
+    }
+    if (filter.value !== undefined) return `>=${filter.value}`;
+    if (filter.value2 !== undefined) return `<=${filter.value2}`;
+    return '';
+  }
+  if (filter.value === undefined) return '';
+  return filter.operator === '=' ? `${filter.value}` : `${filter.operator}${filter.value}`;
 }
 
 function matchesDateFilter(cellValue: any, filter: DateFilterValue, now: Date): boolean {
@@ -186,7 +239,7 @@ export function filterRows<TData extends HierarchicalData<TData>>({
   return dataToFilter;
 }
 
-function compareValues(
+export function compareValues(
   valA: any,
   valB: any,
   direction: 'asc' | 'desc',
@@ -221,13 +274,55 @@ function looksLikeIsoDate(value: any): boolean {
   return /^\d{4}-\d{2}-\d{2}/.test(String(value));
 }
 
+// Computes the next multi-sort configuration array when clicking a sortable column header.
+// - Plain click (`multi = false`): cycles asc -> desc -> none for a sole sorted column, or
+//   replaces any multi-column sort with `[ { field, direction: 'asc' } ]`.
+// - Shift+click (`multi = true`): adds `field` as 'asc', toggles 'asc' -> 'desc', or removes
+//   'desc' from the multi-sort list while preserving priority order of other columns.
+export function computeNextSortConfigs<TData = any>(
+  current: SortConfig<TData>[],
+  field: keyof TData & string,
+  multi = false
+): SortConfig<TData>[] {
+  const existingIndex = current.findIndex(s => s.field === field);
+
+  if (!multi) {
+    if (current.length === 1 && existingIndex === 0) {
+      if (current[0].direction === 'asc') {
+        return [{ field, direction: 'desc' }];
+      }
+      return [];
+    }
+    return [{ field, direction: 'asc' }];
+  }
+
+  if (existingIndex === -1) {
+    return [...current, { field, direction: 'asc' }];
+  }
+
+  const existing = current[existingIndex];
+  if (existing.direction === 'asc') {
+    const next = [...current];
+    next[existingIndex] = { field, direction: 'desc' };
+    return next;
+  }
+
+  return current.filter((_, idx) => idx !== existingIndex);
+}
+
 export function sortRows<TData extends HierarchicalData<TData>>(
   rows: ProcessedRow<TData>[],
   columnDefinitions: ReadonlyMap<keyof TData & string, ColumnDefinition<TData>>,
-  sortConfig: SortConfig<TData> | null,
+  sortConfig: SortConfig<TData> | SortConfig<TData>[] | null,
   groupedBy: (keyof TData & string)[] = [],
   isTreeData = false
 ): ProcessedRow<TData>[] {
+  const sortConfigs: SortConfig<TData>[] = Array.isArray(sortConfig)
+    ? sortConfig
+    : sortConfig
+      ? [sortConfig]
+      : [];
+
   const dataToSort = [...rows];
 
   dataToSort.sort((a, b) => {
@@ -242,17 +337,19 @@ export function sortRows<TData extends HierarchicalData<TData>>(
       }
     }
 
-    if (!sortConfig) return 0;
+    for (const { field, direction } of sortConfigs) {
+      const colDef = columnDefinitions.get(field);
+      if (!colDef) continue;
 
-    const { field, direction } = sortConfig;
-    const colDef = columnDefinitions.get(field);
-    if (!colDef) return 0;
+      const valA = getCellValue(a, field);
+      const valB = getCellValue(b, field);
+      const isDateLike = colDef.filterType === 'date' || (looksLikeIsoDate(valA) && looksLikeIsoDate(valB));
 
-    const valA = getCellValue(a, field);
-    const valB = getCellValue(b, field);
-    const isDateLike = colDef.filterType === 'date' || (looksLikeIsoDate(valA) && looksLikeIsoDate(valB));
+      const cmp = compareValues(valA, valB, direction, isDateLike);
+      if (cmp !== 0) return cmp;
+    }
 
-    return compareValues(valA, valB, direction, isDateLike);
+    return 0;
   });
 
   return dataToSort;

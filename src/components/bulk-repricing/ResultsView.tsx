@@ -1,14 +1,12 @@
-
 "use client";
 import * as React from 'react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/data-grid/DataGrid';
 import type { ColumnDefinition } from '@/types/data-grid';
 import { ArrowLeft, Table as TableIcon } from 'lucide-react';
 import type { ResultPolicy } from './types';
-import { Badge } from '@/components/ui/badge';
 
 
 const initialResultsData: Omit<ResultPolicy, 'premium'>[] = [
@@ -289,6 +287,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
           pageSizeOptions={[5, 10, 20, 50]}
           enableRowSelection={true}
           enableGroupingPanel={true}
+          enableFloatingFilters={true}
+          enablePivotToggle={true}
           virtualized={virtualizedDemo}
           storageKey="repricingResultsGrid"
           conditionalFormats={[

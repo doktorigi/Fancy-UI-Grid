@@ -85,6 +85,11 @@ function FancyGrid({ args, theme }: ComponentProps) {
         pageSizeOptions={args.page_size_options ?? [10, 25, 50, 100]}
         enableRowSelection={args.enable_row_selection ?? true}
         enableGroupingPanel={args.enable_grouping_panel ?? false}
+        enableFloatingFilters={args.enable_floating_filters ?? false}
+        pivotMode={args.pivot_mode ?? false}
+        enablePivotToggle={args.enable_pivot_toggle}
+        pivotColumns={args.pivot_columns ?? []}
+        pivotValues={args.pivot_values}
         isTreeData={args.is_tree_data ?? false}
         treeColumn={args.tree_column ?? undefined}
         storageKey={args.storage_key ?? 'fancyUiGridStreamlit'}

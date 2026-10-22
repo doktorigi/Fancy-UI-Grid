@@ -94,6 +94,12 @@ export interface SortConfig<TData = any> {
   direction: 'asc' | 'desc';
 }
 
+export interface PivotValueConfig<TData = any> {
+  field: keyof TData & string;
+  aggregate: AggregateFunction;
+  headerText?: string;
+}
+
 export interface BaseFilterValue {
   type: FilterType;
 }
@@ -151,7 +157,7 @@ export interface ProcessedRow<TData extends HierarchicalData<TData>> {
   level: number;
   hasChildren: boolean;
   isExpanded?: boolean; // Optional, can be derived from expandedRows set
-  isGroupHeader?: boolean; // True if this row is a group header
+  isGroupHeader?: boolean; // True if this is a group header
   groupField?: keyof TData & string; // Field used for grouping if this is a group header
   groupValue?: any; // Value of the group field if this is a group header
   groupKey?: string; // e.g., "City: New York"
@@ -199,17 +205,22 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
     page: number;
     pageSize: number;
     sortConfig: SortConfig<TData> | null;
+    multiSortConfig?: SortConfig<TData>[];
     columnFilters: ActiveFilters<TData>;
     globalFilter: string;
   }) => void; // Event triggered when grid params change in serverSide mode
+  enableFloatingFilters?: boolean; // Render an inline quick-filter row directly beneath column headers
   pivotMode?: boolean; // Enable pivot table mode
+  enablePivotToggle?: boolean; // Show a Pivot Mode toggle button in the toolbar
   pivotColumns?: (keyof TData & string)[]; // Columns to pivot into dynamic header columns
+  pivotValues?: PivotValueConfig<TData>[]; // Value fields and aggregate functions for pivot cells (defaults to columns with aggregate)
 }
 
 export interface DataGridState<TData extends HierarchicalData<TData>> {
   currentPage: number;
   pageSize: number;
   sortConfig: SortConfig<TData> | null;
+  multiSortConfig?: SortConfig<TData>[];
   globalFilter: string;
   columnFilters: ActiveFilters<TData>;
   visibleColumns: (keyof TData & string)[];
@@ -228,4 +239,8 @@ export interface DataGridState<TData extends HierarchicalData<TData>> {
   focusedCell: { rowId: string | number; colField: keyof TData & string } | null; // For keyboard navigation
   groupedBy: (keyof TData & string)[]; // For column grouping
   expandedGroups: Set<string>; // Tracks expanded group keys
+  pivotMode?: boolean;
+  pivotColumns?: (keyof TData & string)[];
+  pivotValues?: PivotValueConfig<TData>[];
+  floatingFiltersOpen?: boolean;
 }

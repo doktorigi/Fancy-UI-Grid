@@ -1,4 +1,3 @@
-
 "use client";
 import * as React from 'react';
 import { DataGrid } from '@/components/data-grid/DataGrid';
@@ -61,13 +60,13 @@ const money = (v: number | undefined) =>
   typeof v === 'number' ? v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : '';
 
 const TRY_IT: { title: string; body: string }[] = [
+  { title: 'Interactive Pivot Mode', body: 'Click "Pivot Mode" in the toolbar to cross-tabulate Program × State with live Sum / Avg / Min / Max / Count aggregations and row + column grand totals.' },
+  { title: 'Multi-sort & quick filters', body: 'Shift+Click column headers to sort by multiple columns with priority badges (1, 2, 3). Toggle "Quick Filters" for inline filter inputs (>10000, 10..80) right below headers.' },
   { title: 'Excel-style editing', body: 'Double-click Premium or Fees to edit. Select cells and drag the corner fill handle, paste straight from Excel (Ctrl+V), undo with Ctrl+Z.' },
-  { title: 'Range charts', body: 'Drag-select some cells (try State through Fees), right-click, and pick "Chart Selection…" for bars, lines, stacked area, or pie.' },
-  { title: 'Sparklines', body: 'The 12-Mo Premium and Δ / Month columns are inline SVG mini charts — hover them for per-month values.' },
+  { title: 'Range charts & sparklines', body: 'Drag-select cells, right-click, and pick "Chart Selection…" for bars, lines, area, or pie. Hover the 12-Mo Premium and Δ / Month sparklines for monthly values.' },
   { title: 'Find, filter, search', body: 'Ctrl+F finds across the grid with highlights. Every column has typed filters — try the year/month tree on Effective.' },
   { title: 'Group & aggregate', body: 'Drag the Program or State header into the panel above the grid — groups collapse and premium sums roll up. Column totals live in the footer.' },
-  { title: 'Arrange everything', body: 'Drag the ⣿ handle to reorder rows. Drag headers to reorder columns, resize their edges, pin or hide from the header menu.' },
-  { title: 'Master-detail', body: 'Click the chevron on any row for a full-width detail panel — any React content, here with a larger sparkline.' },
+  { title: 'Arrange & master-detail', body: 'Drag the ⣿ handle to reorder rows. Drag headers to reorder columns, resize edges, pin or hide. Click a row chevron for a full-width detail panel.' },
   { title: 'Select & export', body: 'Select a block of numbers and watch Sum / Avg / Min / Max in the status bar. Copy as TSV with Ctrl+C or export CSV/XLSX.' },
 ];
 
@@ -131,8 +130,8 @@ export default function ShowcasePage() {
           <div>
             <h1 className="text-4xl font-bold tracking-tight text-foreground">Fancy UI Grid</h1>
             <p className="mt-2 max-w-2xl text-muted-foreground">
-              A feature-rich React data grid — typed filters, grouping, Excel-style editing,
-              in-cell sparklines, and range charts. Built with Next.js, ShadCN UI, and Tailwind. MIT licensed.
+              A feature-rich React data grid — interactive pivot tables, multi-column sorting, inline floating filters,
+              Excel-style editing, in-cell sparklines, and range charts. Built with Next.js, ShadCN UI, and Tailwind. MIT licensed.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -179,6 +178,8 @@ export default function ShowcasePage() {
           pageSizeOptions={[10, 25, 50, 100]}
           enableRowSelection={true}
           enableGroupingPanel={true}
+          enableFloatingFilters={true}
+          enablePivotToggle={true}
           enableRowReorder={!virtualized}
           onRowsReordered={(data) => { if (!virtualized) setRows(data); }}
           onCellEdit={handleCellEdit}
@@ -211,7 +212,7 @@ export default function ShowcasePage() {
           <a className="underline-offset-4 hover:underline" href="https://github.com/doktorigi/Fancy-UI-Grid" target="_blank" rel="noreferrer">
             github.com/doktorigi/Fancy-UI-Grid
           </a>{' '}
-          · MIT License · Grid state (columns, filters, sort) persists in your browser's localStorage.
+          · MIT License · Grid state (columns, filters, sort, pivot) persists in your browser's localStorage.
         </footer>
       </div>
     </div>

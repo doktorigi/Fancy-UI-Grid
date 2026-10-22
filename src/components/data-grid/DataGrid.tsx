@@ -1,12 +1,13 @@
-
 "use client";
 import * as React from 'react';
 import type {
+  AggregateFunction,
   ColumnDefinition,
   DataGridProps,
   DataGridState,
   FilterValue,
   HierarchicalData,
+  PivotValueConfig,
   ProcessedRow,
 } from '@/types/data-grid';
 import {
@@ -21,9 +22,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataGridHeaderCell } from './DataGridHeaderCell';
+import { DataGridFloatingFilterCell } from './DataGridFloatingFilterCell';
 import { DataGridPagination } from './DataGridPagination';
 import { ColumnVisibilityToggle } from './ColumnVisibilityToggle';
 import { DataGridGroupingPanel } from './DataGridGroupingPanel';
+import { DataGridPivotPanel } from './DataGridPivotPanel';
 import { DataGridStatusBar } from './DataGridStatusBar';
 import { DataGridFindBar } from './DataGridFindBar';
 import { Sparkline } from './Sparkline';
@@ -31,13 +34,14 @@ import { RangeChartDialog } from './RangeChartDialog';
 import { extractRangeChartData, type RangeChartData } from '@/lib/rangeChart';
 import { cn, getCellValue } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ChevronRight, ChevronDown, FileDown, FilterX, GripVertical, Search } from 'lucide-react';
+import { ChevronRight, ChevronDown, Columns3, FileDown, FilterX, GripVertical, ListFilter, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportToCsv, exportToXlsx } from '@/lib/exportUtils';
 import {
   buildHeaderGroupSpans,
   computeAggregate,
   computeFillValues,
+  computeNextSortConfigs,
   computeRangeStats,
   dateTreeKeyOf,
   filterRows,
@@ -46,6 +50,10 @@ import {
   sortRows,
   toStrictNumber,
 } from '@/lib/gridProcessing';
+import {
+  buildPivotTable,
+  deriveDefaultPivotValues,
+} from '@/lib/pivotTable';
 import {
   getConditionalCellStyle,
   computeColumnBounds,
@@ -95,8 +103,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   serverSide = false,
   totalRowCount,
   onServerParamsChange,
+  enableFloatingFilters = false,
   pivotMode = false,
+  enablePivotToggle,
   pivotColumns = [],
+  pivotValues,
 }: DataGridProps<TData>) {
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -132,6 +143,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       currentPage: 1,
       pageSize: defaultPageSize,
       sortConfig: null,
+      multiSortConfig: [],
       globalFilter: '',
       columnFilters: {},
       visibleColumns: initialVisibleColumnsFromDefs,
@@ -147,10 +159,28 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       focusedCell: null,
       groupedBy: [],
       expandedGroups: new Set<string>(),
+      pivotMode,
+      pivotColumns,
+      pivotValues: pivotValues && pivotValues.length > 0 ? pivotValues : deriveDefaultPivotValues(initialColumnDefs),
+      floatingFiltersOpen: enableFloatingFilters,
     };
   });
 
-  const masterDetail = !!detailRenderer;
+  // Sync controlled props when parent toggles pivotMode or enableFloatingFilters
+  React.useEffect(() => {
+    setState(prev => (prev.pivotMode === pivotMode ? prev : { ...prev, pivotMode, currentPage: 1 }));
+  }, [pivotMode]);
+
+  React.useEffect(() => {
+    setState(prev =>
+      prev.floatingFiltersOpen === enableFloatingFilters
+        ? prev
+        : { ...prev, floatingFiltersOpen: enableFloatingFilters }
+    );
+  }, [enableFloatingFilters]);
+
+  const isPivotActive = !!state.pivotMode && !isTreeData;
+  const masterDetail = !!detailRenderer && !isPivotActive;
   // Master-detail expansion is deliberately not persisted to localStorage — detail
   // panels are transient drill-downs, not layout configuration.
   const [expandedDetails, setExpandedDetails] = React.useState<Set<string | number>>(new Set());
@@ -185,11 +215,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const undoStackRef = React.useRef<EditRecord[][]>([]);
   const redoStackRef = React.useRef<EditRecord[][]>([]);
 
-  const canEditCells = !!onCellEdit;
+  const canEditCells = !!onCellEdit && !isPivotActive;
   const fillHandleEnabled = enableFillHandle && enableRangeSelection && canEditCells;
   const pasteEnabled = enableClipboardPaste && canEditCells;
   const undoRedoEnabled = enableUndoRedo && canEditCells;
-  const rowReorderEnabled = enableRowReorder && !!onRowsReordered && !isTreeData;
+  const rowReorderEnabled = enableRowReorder && !!onRowsReordered && !isTreeData && !isPivotActive;
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -218,9 +248,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             .filter((field: keyof TData & string) => currentFieldsSet.has(field));
 
           initialColumnDefs.forEach(col => {
-            if (col.pinned === 'left' && !reconciledPinnedLeft.includes(col.field)) {
+            if (col.pinned === 'left' && !reconciledPinnedLeft.includes(col.field) && !reconciledPinnedRight.includes(col.field)) {
               reconciledPinnedLeft.push(col.field);
-            } else if (col.pinned === 'right' && !reconciledPinnedRight.includes(col.field)) {
+            } else if (col.pinned === 'right' && !reconciledPinnedRight.includes(col.field) && !reconciledPinnedLeft.includes(col.field)) {
               reconciledPinnedRight.push(col.field);
             }
           });
@@ -247,6 +277,19 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             }
           });
 
+          const savedMultiSort = Array.isArray(savedState.multiSortConfig)
+            ? savedState.multiSortConfig
+            : savedState.sortConfig
+              ? [savedState.sortConfig]
+              : [];
+
+          const savedPivotCols = Array.isArray(savedState.pivotColumns)
+            ? savedState.pivotColumns.filter((f: keyof TData & string) => currentFieldsSet.has(f))
+            : [];
+
+          const savedPivotVals = Array.isArray(savedState.pivotValues)
+            ? savedState.pivotValues.filter((v: PivotValueConfig<TData>) => currentFieldsSet.has(v.field))
+            : [];
 
           setState(prevState => ({
             ...prevState,
@@ -257,12 +300,22 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               right: reconciledPinnedRight
             },
             columnFilters: reconciledColumnFilters,
-            sortConfig: savedState.sortConfig || null,
+            sortConfig: savedMultiSort[0] || savedState.sortConfig || null,
+            multiSortConfig: savedMultiSort,
             pageSize: savedState.pageSize || defaultPageSize,
             expandedRows: savedState.expandedRows ? new Set(Array.from(savedState.expandedRows)) : new Set(),
             visibleColumns: reconciledVisibleColumns.length > 0 ? reconciledVisibleColumns : prevState.visibleColumns,
-            groupedBy: savedState.groupedBy || [], 
+            groupedBy: (savedState.groupedBy || []).filter((f: keyof TData & string) => currentFieldsSet.has(f)), 
             expandedGroups: savedState.expandedGroups ? new Set(Array.from(savedState.expandedGroups)) : new Set(),
+            pivotMode: pivotMode || !!savedState.pivotMode,
+            pivotColumns: pivotColumns.length > 0 ? pivotColumns : savedPivotCols,
+            pivotValues:
+              pivotValues && pivotValues.length > 0
+                ? pivotValues
+                : savedPivotVals.length > 0
+                  ? savedPivotVals
+                  : prevState.pivotValues,
+            floatingFiltersOpen: enableFloatingFilters || !!savedState.floatingFiltersOpen,
             currentPage: 1, 
             focusedCell: null,
           }));
@@ -282,11 +335,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         pinnedColumns: state.pinnedColumns,
         columnFilters: state.columnFilters,
         sortConfig: state.sortConfig,
+        multiSortConfig: state.multiSortConfig,
         pageSize: state.pageSize,
         expandedRows: Array.from(state.expandedRows),
         visibleColumns: state.visibleColumns,
         groupedBy: state.groupedBy, 
         expandedGroups: Array.from(state.expandedGroups),
+        pivotMode: state.pivotMode,
+        pivotColumns: state.pivotColumns,
+        pivotValues: state.pivotValues,
+        floatingFiltersOpen: state.floatingFiltersOpen,
       };
       localStorage.setItem(storageKey, JSON.stringify(stateToSave));
     }
@@ -297,11 +355,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     state.pinnedColumns,
     state.columnFilters,
     state.sortConfig,
+    state.multiSortConfig,
     state.pageSize,
     state.expandedRows,
     state.visibleColumns,
     state.groupedBy, 
     state.expandedGroups,
+    state.pivotMode,
+    state.pivotColumns,
+    state.pivotValues,
+    state.floatingFiltersOpen,
   ]);
 
   const treeColumn = specifiedTreeColumn || (initialColumnDefs.length > 0 ? initialColumnDefs[0].field : undefined);
@@ -311,7 +374,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const uniqueValues = new Set<string>();
     const traverse = (items: TData[]) => {
       items.forEach(row => {
-        const value = getCellValue({originalRow: row} as ProcessedRow<TData>, field); // Adjusted to pass ProcessedRow-like structure
+        const value = getCellValue({originalRow: row} as ProcessedRow<TData>, field);
         if (value !== undefined && value !== null) {
           uniqueValues.add(String(value));
         }
@@ -370,7 +433,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         level,
         hasChildren,
         isExpanded,
-        // Do not spread item here to avoid ProcessedRow specific props being overwritten by originalRow
       });
       if (hasChildren && isExpanded && item.children) {
         flatList = flatList.concat(flattenTreeData(item.children, expandedRows, level + 1));
@@ -389,17 +451,24 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       level: 0,
       hasChildren: false,
       isExpanded: false,
-       // Do not spread item here
     }));
   }, [initialData, isTreeData, flattenTreeData, state.expandedRows]);
 
-  const handleSort = (field: keyof TData & string) => {
+  const handleSort = (field: keyof TData & string, multiSort = false) => {
     setState((prevState) => {
-      let direction: 'asc' | 'desc' = 'asc';
-      if (prevState.sortConfig?.field === field && prevState.sortConfig.direction === 'asc') {
-        direction = 'desc';
-      }
-      return { ...prevState, sortConfig: { field, direction }, currentPage: 1 };
+      const currentList =
+        prevState.multiSortConfig && prevState.multiSortConfig.length > 0
+          ? prevState.multiSortConfig
+          : prevState.sortConfig
+            ? [prevState.sortConfig]
+            : [];
+      const nextList = computeNextSortConfigs(currentList, field, multiSort);
+      return {
+        ...prevState,
+        multiSortConfig: nextList,
+        sortConfig: nextList[0] || null,
+        currentPage: 1,
+      };
     });
   };
 
@@ -606,7 +675,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     setState(prevState => {
       if (prevState.groupedBy.includes(field)) return prevState;
       const newGroupedBy = [...prevState.groupedBy, field]; 
-      return { ...prevState, groupedBy: newGroupedBy, currentPage: 1, expandedGroups: new Set() };
+      return {
+        ...prevState,
+        groupedBy: newGroupedBy,
+        pivotColumns: (prevState.pivotColumns || []).filter(f => f !== field),
+        currentPage: 1,
+        expandedGroups: new Set(),
+      };
     });
   };
 
@@ -619,8 +694,119 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     }));
   };
 
+  // ---- Pivot Table handlers ----
+  const handleTogglePivotMode = () => {
+    setState(prev => {
+      const nextPivotMode = !prev.pivotMode;
+      let nextGroupedBy = prev.groupedBy;
+      let nextPivotColumns = prev.pivotColumns || [];
+      const nextPivotValues =
+        prev.pivotValues && prev.pivotValues.length > 0
+          ? prev.pivotValues
+          : deriveDefaultPivotValues(processedColumnDefs);
+
+      if (nextPivotMode && nextGroupedBy.length === 0 && nextPivotColumns.length === 0) {
+        // Seed sensible default Row Group and Pivot Column from categorical columns
+        const candidates = processedColumnDefs.filter(
+          c =>
+            c.groupable !== false &&
+            !c.sparkline &&
+            c.filterType !== 'number' &&
+            !c.aggregate
+        );
+        if (candidates.length >= 2) {
+          // Prefer low-cardinality select columns for pivot headers when available
+          const selectCols = candidates.filter(c => c.filterType === 'select');
+          if (selectCols.length >= 2) {
+            nextGroupedBy = [selectCols[0].field];
+            nextPivotColumns = [selectCols[1].field];
+          } else if (selectCols.length === 1) {
+            const other = candidates.find(c => c.field !== selectCols[0].field)!;
+            nextGroupedBy = [other.field];
+            nextPivotColumns = [selectCols[0].field];
+          } else {
+            nextGroupedBy = [candidates[0].field];
+            nextPivotColumns = [candidates[1].field];
+          }
+        } else if (candidates.length === 1) {
+          nextGroupedBy = [candidates[0].field];
+        }
+      }
+
+      return {
+        ...prev,
+        pivotMode: nextPivotMode,
+        groupedBy: nextGroupedBy,
+        pivotColumns: nextPivotColumns,
+        pivotValues: nextPivotValues,
+        sortConfig: null,
+        multiSortConfig: [],
+        currentPage: 1,
+      };
+    });
+  };
+
+  const handleAddPivotColumn = (field: keyof TData & string) => {
+    setState(prev => {
+      const current = prev.pivotColumns || [];
+      if (current.includes(field)) return prev;
+      return {
+        ...prev,
+        pivotColumns: [...current, field],
+        groupedBy: prev.groupedBy.filter(f => f !== field),
+        currentPage: 1,
+      };
+    });
+  };
+
+  const handleRemovePivotColumn = (field: keyof TData & string) => {
+    setState(prev => ({
+      ...prev,
+      pivotColumns: (prev.pivotColumns || []).filter(f => f !== field),
+      currentPage: 1,
+    }));
+  };
+
+  const handleAddPivotValue = (field: keyof TData & string, aggregate?: AggregateFunction) => {
+    const col = colDefsMap.get(field);
+    const defaultAgg: AggregateFunction =
+      aggregate ||
+      (col?.aggregate
+        ? Array.isArray(col.aggregate)
+          ? col.aggregate[0]
+          : col.aggregate
+        : col?.filterType === 'number'
+          ? 'sum'
+          : 'count');
+    setState(prev => {
+      const current = prev.pivotValues || [];
+      if (current.some(v => v.field === field && v.aggregate === defaultAgg)) return prev;
+      return {
+        ...prev,
+        pivotValues: [...current, { field, aggregate: defaultAgg, headerText: col?.headerText }],
+      };
+    });
+  };
+
+  const handleChangePivotValueAggregate = (index: number, aggregate: AggregateFunction) => {
+    setState(prev => {
+      const next = [...(prev.pivotValues || [])];
+      if (!next[index]) return prev;
+      next[index] = { ...next[index], aggregate };
+      return { ...prev, pivotValues: next };
+    });
+  };
+
+  const handleRemovePivotValue = (index: number) => {
+    setState(prev => {
+      const next = (prev.pivotValues || []).filter((_, i) => i !== index);
+      return { ...prev, pivotValues: next };
+    });
+  };
+
 
   const startEditingCell = (rowId: string | number, field: keyof TData & string) => {
+    if (isPivotActive) return;
     const columnDef = processedColumnDefs.find(col => col.field === field);
     const row = baseDataForProcessing.find(r => r.id === rowId);
     if (columnDef?.editable && row) {
@@ -728,7 +914,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // its content so a fresh-but-equal array can't cascade new identities through
   // filteredData/sortedData (which feeds onFilteredDataChange and can loop a parent
   // that setStates in response).
-  const globalFilterFieldsKey = globalFilterFields?.join(' ');
+  const globalFilterFieldsKey = globalFilterFields?.join('\u0000');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableGlobalFilterFields = React.useMemo(() => globalFilterFields, [globalFilterFieldsKey]);
 
@@ -744,10 +930,43 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     });
   }, [serverSide, baseDataForProcessing, state.globalFilter, state.columnFilters, processedColumnDefs, state.visibleColumns, stableGlobalFilterFields]);
 
+  const activeSortConfigs = React.useMemo(
+    () =>
+      state.multiSortConfig && state.multiSortConfig.length > 0
+        ? state.multiSortConfig
+        : state.sortConfig
+          ? [state.sortConfig]
+          : null,
+    [state.multiSortConfig, state.sortConfig]
+  );
+
+  // Build pivot table when Pivot Mode is active
+  const pivotTableResult = React.useMemo(() => {
+    if (!isPivotActive) return null;
+    return buildPivotTable({
+      rows: filteredData,
+      columns: processedColumnDefs,
+      rowGroupFields: state.groupedBy,
+      pivotFields: state.pivotColumns || [],
+      valueConfigs: state.pivotValues,
+      showRowTotals: true,
+    });
+  }, [isPivotActive, filteredData, processedColumnDefs, state.groupedBy, state.pivotColumns, state.pivotValues]);
+
+  const activeColDefsMap = React.useMemo(() => {
+    if (isPivotActive && pivotTableResult) {
+      return new Map(pivotTableResult.columns.map(col => [col.field, col]));
+    }
+    return colDefsMap;
+  }, [isPivotActive, pivotTableResult, colDefsMap]);
+
   const sortedData = React.useMemo(() => {
+    if (isPivotActive && pivotTableResult) {
+      return sortRows(pivotTableResult.rows, activeColDefsMap, activeSortConfigs, [], false);
+    }
     if (serverSide) return filteredData;
-    return sortRows(filteredData, colDefsMap, state.sortConfig, state.groupedBy, isTreeData);
-  }, [serverSide, filteredData, state.sortConfig, state.groupedBy, colDefsMap, isTreeData]);
+    return sortRows(filteredData, colDefsMap, activeSortConfigs, state.groupedBy, isTreeData);
+  }, [isPivotActive, pivotTableResult, activeColDefsMap, serverSide, filteredData, activeSortConfigs, state.groupedBy, colDefsMap, isTreeData]);
 
   const onServerParamsChangeRef = React.useRef(onServerParamsChange);
   onServerParamsChangeRef.current = onServerParamsChange;
@@ -758,10 +977,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       page: state.currentPage,
       pageSize: state.pageSize,
       sortConfig: state.sortConfig,
+      multiSortConfig: state.multiSortConfig,
       columnFilters: state.columnFilters,
       globalFilter: state.globalFilter,
     });
-  }, [serverSide, state.currentPage, state.pageSize, state.sortConfig, state.columnFilters, state.globalFilter]);
+  }, [serverSide, state.currentPage, state.pageSize, state.sortConfig, state.multiSortConfig, state.columnFilters, state.globalFilter]);
 
   // Report the filtered+sorted rows to the host (for external summaries/KPIs).
   // The callback is kept in a ref so an unstable function identity doesn't re-fire the effect.
@@ -772,15 +992,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // ping-pong forever (and clear transient state like range selections).
   const lastEmittedRowsRef = React.useRef<TData[] | null>(null);
   React.useEffect(() => {
+    if (isPivotActive) return;
     const rows = sortedData.filter(r => !r.isGroupHeader).map(r => r.originalRow);
     const last = lastEmittedRowsRef.current;
     if (last && last.length === rows.length && last.every((r, i) => r === rows[i])) return;
     lastEmittedRowsRef.current = rows;
     onFilteredDataChangeRef.current?.(rows);
-  }, [sortedData]);
+  }, [sortedData, isPivotActive]);
 
   const dataWithGroupHeaders = React.useMemo(() => {
-    if (state.groupedBy.length === 0 || isTreeData) { 
+    if (isPivotActive || state.groupedBy.length === 0 || isTreeData) { 
       return sortedData;
     }
 
@@ -847,12 +1068,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     };
 
     return buildGroupedRows(sortedData, 0, "", 0);
-  }, [sortedData, state.groupedBy, state.expandedGroups, isTreeData, getCellValue]);
+  }, [isPivotActive, sortedData, state.groupedBy, state.expandedGroups, isTreeData]);
 
 
   const dataToPaginate = React.useMemo(() => {
-    return state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData;
-  }, [dataWithGroupHeaders, sortedData, state.groupedBy, isTreeData]);
+    return !isPivotActive && state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData;
+  }, [isPivotActive, dataWithGroupHeaders, sortedData, state.groupedBy, isTreeData]);
 
   const paginatedData = React.useMemo(() => {
     if (virtualized || serverSide) {
@@ -930,6 +1151,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
 
   const orderedVisibleColumnDefs = React.useMemo(() => {
+    if (isPivotActive && pivotTableResult) {
+      return pivotTableResult.columns;
+    }
+
     const leftPinned = state.pinnedColumns.left
       .map(field => colDefsMap.get(field)!)
       .filter(col => col && state.visibleColumns.includes(col.field));
@@ -943,12 +1168,26 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       .filter(col => col && state.visibleColumns.includes(col.field) && !state.pinnedColumns.left.includes(col.field) && !state.pinnedColumns.right.includes(col.field));
 
     return [...leftPinned, ...scrollable, ...rightPinned];
-  }, [colDefsMap, state.columnOrder, state.visibleColumns, state.pinnedColumns]);
+  }, [isPivotActive, pivotTableResult, colDefsMap, state.columnOrder, state.visibleColumns, state.pinnedColumns]);
+
+  const effectivePinnedLeft = React.useMemo(() => {
+    if (isPivotActive && pivotTableResult) {
+      return pivotTableResult.columns.filter(c => c.pinned === 'left').map(c => c.field);
+    }
+    return state.pinnedColumns.left;
+  }, [isPivotActive, pivotTableResult, state.pinnedColumns.left]);
+
+  const effectivePinnedRight = React.useMemo(() => {
+    if (isPivotActive && pivotTableResult) {
+      return pivotTableResult.columns.filter(c => c.pinned === 'right').map(c => c.field);
+    }
+    return state.pinnedColumns.right;
+  }, [isPivotActive, pivotTableResult, state.pinnedColumns.right]);
 
   const getColumnWidth = React.useCallback((field: keyof TData & string): number => {
-    const width = state.columnWidths[field] || colDefsMap.get(field)?.defaultWidth || DEFAULT_COL_WIDTH;
+    const width = state.columnWidths[field] || activeColDefsMap.get(field)?.defaultWidth || DEFAULT_COL_WIDTH;
     return typeof width === 'number' ? width : parseInt(String(width), 10) || DEFAULT_COL_WIDTH;
-  }, [state.columnWidths, colDefsMap]);
+  }, [state.columnWidths, activeColDefsMap]);
 
   const stickyOffsets = React.useMemo(() => {
     const left: Record<string, number> = {};
@@ -962,8 +1201,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     if (masterDetail) {
         currentLeftOffset += 40; // detail expander column
     }
-    state.pinnedColumns.left.forEach(field => {
-      if (state.visibleColumns.includes(field)) {
+    effectivePinnedLeft.forEach(field => {
+      if (isPivotActive || state.visibleColumns.includes(field)) {
         left[field] = currentLeftOffset;
         currentLeftOffset += getColumnWidth(field);
       }
@@ -971,14 +1210,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
     const right: Record<string, number> = {};
     let currentRightOffset = 0;
-    state.pinnedColumns.right.slice().reverse().forEach(field => {
-       if (state.visibleColumns.includes(field)) {
+    effectivePinnedRight.slice().reverse().forEach(field => {
+       if (isPivotActive || state.visibleColumns.includes(field)) {
         right[field] = currentRightOffset;
         currentRightOffset += getColumnWidth(field);
       }
     });
     return { left, right, totalLeftWidth: currentLeftOffset, totalRightWidth: currentRightOffset };
-  }, [state.pinnedColumns, state.visibleColumns, getColumnWidth, enableRowSelection, masterDetail, rowReorderEnabled]);
+  }, [isPivotActive, effectivePinnedLeft, effectivePinnedRight, state.visibleColumns, getColumnWidth, enableRowSelection, masterDetail, rowReorderEnabled]);
 
   const isAllCurrentPageRowsSelected = paginatedData.length > 0 && paginatedData.filter(r => !r.isGroupHeader).every(row => state.selectedRows.has(row.id));
 
@@ -1002,7 +1241,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // row id sequence, not array identity: a re-render that reproduces the same rows
   // (e.g. a parent setState from onFilteredDataChange) must not clear the range.
   const paginatedRowIdsKey = React.useMemo(
-    () => paginatedData.map(r => r.id).join(' '),
+    () => paginatedData.map(r => r.id).join('\u0000'),
     [paginatedData]
   );
   const prevRowIdsKeyRef = React.useRef(paginatedRowIdsKey);
@@ -1273,7 +1512,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // ---- Row drag-and-drop reorder ----
   // Reordering only means something in the data's own order: sorting or grouping
   // would immediately re-sort whatever the user dropped, so the handle deactivates.
-  const rowReorderActive = rowReorderEnabled && !state.sortConfig && state.groupedBy.length === 0;
+  const rowReorderActive = rowReorderEnabled && !activeSortConfigs && state.groupedBy.length === 0;
 
   const handleRowDragStart = (e: React.DragEvent, rowId: string | number) => {
     e.dataTransfer.setData('text/plain', String(rowId));
@@ -1339,14 +1578,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const hasHeaderGroups = orderedVisibleColumnDefs.some(c => c.group);
   const headerGroupSpans = React.useMemo(() => {
     if (!hasHeaderGroups) return null;
-    const leftCount = orderedVisibleColumnDefs.filter(c => state.pinnedColumns.left.includes(c.field)).length;
-    const rightCount = orderedVisibleColumnDefs.filter(c => state.pinnedColumns.right.includes(c.field)).length;
+    const leftCount = orderedVisibleColumnDefs.filter(c => effectivePinnedLeft.includes(c.field)).length;
+    const rightCount = orderedVisibleColumnDefs.filter(c => effectivePinnedRight.includes(c.field)).length;
     return {
       left: buildHeaderGroupSpans(orderedVisibleColumnDefs.slice(0, leftCount)),
       middle: buildHeaderGroupSpans(orderedVisibleColumnDefs.slice(leftCount, orderedVisibleColumnDefs.length - rightCount)),
       right: buildHeaderGroupSpans(orderedVisibleColumnDefs.slice(orderedVisibleColumnDefs.length - rightCount)),
     };
-  }, [hasHeaderGroups, orderedVisibleColumnDefs, state.pinnedColumns]);
+  }, [hasHeaderGroups, orderedVisibleColumnDefs, effectivePinnedLeft, effectivePinnedRight]);
 
   // Copy precedence: a multi-cell range wins, then checkbox-selected rows (always
   // with a header row, matching pre-range behavior), then the focused cell.
@@ -1397,10 +1636,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const contextMenuRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!contextMenu) return;
-    // Note: stopPropagation from inside the menu can't be trusted here — with React
-    // roots hydrated at `document` (Next.js App Router), React's delegated handler and
-    // this listener share the same node, and stopPropagation doesn't silence same-node
-    // listeners. Check containment instead.
     const closeUnlessInside = (e: Event) => {
       if (contextMenuRef.current?.contains(e.target as Node)) return;
       setContextMenu(null);
@@ -1421,19 +1656,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
 
   const handleGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // Keys typed into interactive elements rendered by custom cells (inputs,
-    // popover search boxes, the find bar) belong to those elements. Only the
-    // grid's own inline cell editor (state.editingCell) takes part in grid key
-    // handling — without this, Space/arrows/Enter get preventDefault'ed and
-    // never reach the field. Portaled popovers still bubble here through the
-    // React tree, so a DOM-containment check would not cover them.
-    const keyTarget = e.target as HTMLElement;
+    const target = e.target as HTMLElement | null;
     if (
+      target &&
       !state.editingCell &&
-      (keyTarget.tagName === 'INPUT' ||
-        keyTarget.tagName === 'TEXTAREA' ||
-        keyTarget.tagName === 'SELECT' ||
-        keyTarget.isContentEditable)
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
     ) {
       return;
     }
@@ -1569,7 +1799,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             } else if (enableGroupingPanel && focusedRow.isGroupHeader && focusedRow.groupKey && e.key === 'Enter') {
                  handleToggleExpandGroup(focusedRow.groupKey);
             } else if (!focusedRow.isGroupHeader) {
-                const colDef = colDefsMap.get(focusedCell.colField);
+                const colDef = activeColDefsMap.get(focusedCell.colField);
                 if (colDef?.editable) {
                     startEditingCell(focusedCell.rowId, focusedCell.colField);
                 }
@@ -1604,9 +1834,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   React.useEffect(() => {
     if (state.focusedCell && !state.editingCell && tableWrapperRef.current) {
-      // Click only updates React state; without this, DOM focus stays on
-      // <body>, so onKeyDown here never fires and arrow keys fall through
-      // to the browser's default page-scroll instead of cell navigation.
+      // Do not steal focus if an input inside the floating filter row or toolbar is currently focused
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && tableWrapperRef.current.contains(activeEl) && activeEl.closest('input, select, textarea')) {
+        return;
+      }
       tableWrapperRef.current.focus({ preventScroll: true });
       const cellId = `cell-${state.focusedCell.rowId}-${state.focusedCell.colField}`;
       const cellElement = document.getElementById(cellId);
@@ -1617,15 +1849,16 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
          if (tableContainer) {
             const containerRect = tableContainer.getBoundingClientRect();
             const colField = state.focusedCell.colField;
-            const isLeftPinned = state.pinnedColumns.left.includes(colField);
-            const isRightPinned = state.pinnedColumns.right.includes(colField);
+            const isLeftPinned = effectivePinnedLeft.includes(colField);
+            const isRightPinned = effectivePinnedRight.includes(colField);
+            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom;
 
             if (isLeftPinned) {
               if (tableContainer.scrollLeft > 0) {
                 tableContainer.scrollLeft = 0;
               }
             } else if (isRightPinned) {
-              const maxScroll = tableContainer.scrollWidth - tableContainer.clientWidth;
+              const maxScroll = Math.max(0, tableContainer.scrollWidth - tableContainer.clientWidth);
               if (tableContainer.scrollLeft < maxScroll) {
                 tableContainer.scrollLeft = maxScroll;
               }
@@ -1633,7 +1866,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               const visibleLeft = containerRect.left + stickyOffsets.totalLeftWidth;
               const visibleRight = containerRect.right - stickyOffsets.totalRightWidth;
               const isVisibleX = cellRect.left >= visibleLeft && cellRect.right <= visibleRight;
-
               if (!isVisibleX) {
                 if (cellRect.left < visibleLeft) {
                   tableContainer.scrollLeft -= (visibleLeft - cellRect.left);
@@ -1642,8 +1874,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 }
               }
             }
-
-            const isVisibleY = cellRect.top >= containerRect.top && cellRect.bottom <= containerRect.bottom;
             if (!isVisibleY) {
               cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             }
@@ -1652,7 +1882,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
          }
       }
     }
-  }, [state.focusedCell, state.editingCell, paginatedData, state.pinnedColumns, stickyOffsets.totalLeftWidth, stickyOffsets.totalRightWidth]);
+  }, [state.focusedCell, state.editingCell, paginatedData, effectivePinnedLeft, effectivePinnedRight, stickyOffsets.totalLeftWidth, stickyOffsets.totalRightWidth]);
 
   if (!initialData) {
      return (
@@ -1744,6 +1974,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // When a group header row is present, the main header row sticks below it (top-8 = 2rem).
   const headerTopClass = hasHeaderGroups ? 'top-8' : 'top-0';
   const groupedByColumns = state.groupedBy.map(field => colDefsMap.get(field)!).filter(Boolean);
+  const hasFilterableColumns = processedColumnDefs.some(c => c.filterable && c.filterType);
+  const showFloatingFilterRow = !!state.floatingFiltersOpen && hasFilterableColumns && !isPivotActive;
+  const showPivotButton =
+    !isTreeData &&
+    (enablePivotToggle !== undefined
+      ? enablePivotToggle
+      : enableGroupingPanel || pivotMode || (pivotColumns && pivotColumns.length > 0));
 
   const aggregateLabels: Record<string, string> = { sum: 'Sum', avg: 'Avg', min: 'Min', max: 'Max', count: 'Count' };
 
@@ -1772,13 +2009,35 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       onKeyDown={handleGridKeyDown}
       onPaste={handlePaste}
     >
-      {enableGroupingPanel && !isTreeData && (
-        <DataGridGroupingPanel
-          groupedColumns={groupedByColumns as ColumnDefinition<TData>[]}
+      {isPivotActive ? (
+        <DataGridPivotPanel
+          allColumns={processedColumnDefs}
           allColumnsMap={colDefsMap as Map<keyof TData & string, ColumnDefinition<TData>>}
-          onUngroupColumn={handleUngroupColumn}
-          onDropColumn={handleGroupColumn}
+          rowGroupFields={state.groupedBy}
+          pivotFields={state.pivotColumns || []}
+          valueConfigs={
+            state.pivotValues && state.pivotValues.length > 0
+              ? state.pivotValues
+              : deriveDefaultPivotValues(processedColumnDefs)
+          }
+          onAddRowGroup={handleGroupColumn}
+          onRemoveRowGroup={handleUngroupColumn}
+          onAddPivotColumn={handleAddPivotColumn}
+          onRemovePivotColumn={handleRemovePivotColumn}
+          onAddValueConfig={handleAddPivotValue}
+          onChangeValueAggregate={handleChangePivotValueAggregate}
+          onRemoveValueConfig={handleRemovePivotValue}
+          onExitPivotMode={handleTogglePivotMode}
         />
+      ) : (
+        enableGroupingPanel && !isTreeData && (
+          <DataGridGroupingPanel
+            groupedColumns={groupedByColumns as ColumnDefinition<TData>[]}
+            allColumnsMap={colDefsMap as Map<keyof TData & string, ColumnDefinition<TData>>}
+            onUngroupColumn={handleUngroupColumn}
+            onDropColumn={handleGroupColumn}
+          />
+        )
       )}
       <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-2">
         <Input
@@ -1788,11 +2047,37 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           className="max-w-xs h-9"
           aria-label="Global search input"
         />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {activeFilterCount > 0 && (
             <Button variant="ghost" size="sm" onClick={handleClearAllFilters}>
               <FilterX className="mr-2 h-4 w-4" />
               Clear filters ({activeFilterCount})
+            </Button>
+          )}
+          {hasFilterableColumns && !isPivotActive && (
+            <Button
+              variant={state.floatingFiltersOpen ? "default" : "outline"}
+              size="sm"
+              onClick={() =>
+                setState(prev => ({ ...prev, floatingFiltersOpen: !prev.floatingFiltersOpen }))
+              }
+              aria-label="Toggle inline quick-filter row"
+              aria-pressed={!!state.floatingFiltersOpen}
+            >
+              <ListFilter className="mr-2 h-4 w-4" />
+              Quick Filters
+            </Button>
+          )}
+          {showPivotButton && (
+            <Button
+              variant={isPivotActive ? "default" : "outline"}
+              size="sm"
+              onClick={handleTogglePivotMode}
+              aria-label="Toggle Pivot Table Mode"
+              aria-pressed={isPivotActive}
+            >
+              <Columns3 className="mr-2 h-4 w-4" />
+              Pivot Mode
             </Button>
           )}
           {enableFind && (
@@ -1801,11 +2086,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               Find
             </Button>
           )}
-          <ColumnVisibilityToggle
-            allColumns={processedColumnDefs}
-            visibleColumns={state.visibleColumns}
-            onVisibilityChange={handleColumnVisibilityChange}
-          />
+          {!isPivotActive && (
+            <ColumnVisibilityToggle
+              allColumns={processedColumnDefs}
+              visibleColumns={state.visibleColumns}
+              onVisibilityChange={handleColumnVisibilityChange}
+            />
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -1846,17 +2133,6 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         style={virtualized ? { maxHeight: `${virtualizedMaxHeight}px` } : undefined}
       >
         <Table>
-          {/*
-            table-layout:fixed (see ui/table.tsx) makes column widths
-            authoritative instead of content-driven - without it, a header's
-            text+icons can force a column wider than its configured width,
-            while sticky offsets (computed from that same configured width)
-            don't know it happened, so later pinned columns render short and
-            overlap real content. A <colgroup> is what makes the configured
-            width stick even though the header has a colSpan'd group row
-            above it, which fixed layout can't otherwise derive per-column
-            widths from.
-          */}
           <colgroup>
             {rowReorderEnabled && <col style={{ width: reorderColumnWidth }} />}
             {enableRowSelection && <col style={{ width: checkboxColumnWidth }} />}
@@ -1963,11 +2239,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 />
               )}
               {orderedVisibleColumnDefs.map((colDef) => {
-                const isDraggableForReorder = colDef.reorderable !== false && !state.pinnedColumns.left.includes(colDef.field) && !state.pinnedColumns.right.includes(colDef.field);
+                const isDraggableForReorder = !isPivotActive && colDef.reorderable !== false && !effectivePinnedLeft.includes(colDef.field) && !effectivePinnedRight.includes(colDef.field);
                 const currentWidth = state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
-                const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
-                const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
-                const isGrouped = state.groupedBy.includes(colDef.field);
+                const isLeftPinned = effectivePinnedLeft.includes(colDef.field);
+                const isRightPinned = effectivePinnedRight.includes(colDef.field);
+                const isGrouped = !isPivotActive && state.groupedBy.includes(colDef.field);
 
 
                 let stickyStyle: React.CSSProperties = {};
@@ -1992,20 +2268,21 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       "px-0 py-0",
                       headerTopClass,
                       (isLeftPinned || isRightPinned) && "sticky-header-cell bg-card",
-                      isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
-                      isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
+                      isLeftPinned && effectivePinnedLeft.length > 0 && "pinned-left-shadow",
+                      isRightPinned && effectivePinnedRight.length > 0 && "pinned-right-shadow",
                       isGrouped && "bg-muted/70"
                     )}
                     onDragOver={(e) => isDraggableForReorder && handleDragOverReorder(e, colDef.field)}
                     onDragLeave={() => isDraggableForReorder && handleDragLeaveReorder()}
                     onDrop={(e) => isDraggableForReorder && handleDropReorder(colDef.field, e)}
-                    onDragEnd={() => (isDraggableForReorder || (enableGroupingPanel && colDef.groupable !== false)) && handleDragEndColumn()}
+                    onDragEnd={() => (isDraggableForReorder || ((enableGroupingPanel || isPivotActive) && colDef.groupable !== false)) && handleDragEndColumn()}
                     data-is-dragged={state.draggedColumn === colDef.field}
                     data-is-drop-target={state.draggedOverColumn === colDef.field && state.draggedColumn !== colDef.field}
                   >
                     <DataGridHeaderCell
                       column={colDef}
                       sortConfig={state.sortConfig}
+                      multiSortConfig={state.multiSortConfig}
                       onSort={handleSort}
                       onFilterChange={handleColumnFilterChange}
                       columnFilters={state.columnFilters}
@@ -2013,7 +2290,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       onColumnWidthChange={handleColumnWidthChange}
                       onPinColumn={handlePinColumn}
                       isDraggableForReorder={isDraggableForReorder && !isGrouped}
-                      isDraggableForGrouping={enableGroupingPanel && colDef.groupable !== false && !isGrouped && !isTreeData}
+                      isDraggableForGrouping={(enableGroupingPanel || isPivotActive) && colDef.groupable !== false && !isGrouped && !isTreeData}
                       currentPinnedState={
                         isLeftPinned ? 'left' : isRightPinned ? 'right' : null
                       }
@@ -2023,6 +2300,79 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 );
               })}
             </TableRow>
+            {showFloatingFilterRow && (
+              <TableRow className="floating-filter-row bg-muted/30 hover:bg-muted/30 border-b">
+                {rowReorderEnabled && (
+                  <TableHead
+                    className="h-9 px-0 py-0 sticky-header-cell bg-muted/30"
+                    style={{
+                      width: reorderColumnWidth,
+                      minWidth: reorderColumnWidth,
+                      left: 0,
+                      zIndex: 21,
+                    }}
+                  />
+                )}
+                {enableRowSelection && (
+                  <TableHead
+                    className="h-9 px-0 py-0 sticky-header-cell bg-muted/30"
+                    style={{
+                      width: checkboxColumnWidth,
+                      minWidth: checkboxColumnWidth,
+                      left: checkboxColumnLeft,
+                      zIndex: 21,
+                    }}
+                  />
+                )}
+                {masterDetail && (
+                  <TableHead
+                    className="h-9 px-0 py-0 sticky-header-cell bg-muted/30"
+                    style={{
+                      width: detailColumnWidth,
+                      minWidth: detailColumnWidth,
+                      left: detailColumnLeft,
+                      zIndex: 21,
+                    }}
+                  />
+                )}
+                {orderedVisibleColumnDefs.map(colDef => {
+                  const currentWidth = state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`;
+                  const isLeftPinned = effectivePinnedLeft.includes(colDef.field);
+                  const isRightPinned = effectivePinnedRight.includes(colDef.field);
+                  const stickyStyle: React.CSSProperties = {};
+                  if (isLeftPinned) {
+                    stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
+                    stickyStyle.zIndex = 21;
+                  } else if (isRightPinned) {
+                    stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
+                    stickyStyle.zIndex = 21;
+                  }
+
+                  return (
+                    <TableHead
+                      key={`floating-filter-${colDef.field}`}
+                      style={{
+                        width: currentWidth,
+                        minWidth: colDef.minWidth || currentWidth || '50px',
+                        ...stickyStyle,
+                      }}
+                      className={cn(
+                        "h-9 px-0 py-0 align-middle",
+                        (isLeftPinned || isRightPinned) && "sticky-header-cell bg-card",
+                        isLeftPinned && effectivePinnedLeft.length > 0 && "pinned-left-shadow",
+                        isRightPinned && effectivePinnedRight.length > 0 && "pinned-right-shadow"
+                      )}
+                    >
+                      <DataGridFloatingFilterCell
+                        column={colDef}
+                        filterValue={state.columnFilters[colDef.field]}
+                        onFilterChange={handleColumnFilterChange}
+                      />
+                    </TableHead>
+                  );
+                })}
+              </TableRow>
+            )}
           </TableHeader>
           <TableBody>
             {virtualized && topSpacer > 0 && (
@@ -2085,14 +2435,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                     </TableRow>
                   )
                 }
-                const rowStyle = getRowStyle?.(row.originalRow);
-                // Pinned cells need to stay opaque so a scrolled-under column
-                // can't show through - but row tints are often translucent
-                // (alpha over the page background), so setting backgroundColor
-                // directly would make the "opaque" pinned cell see-through too.
-                // Layer the tint as a background-image over the cell's own
-                // solid bg-card instead: still reads as the row color, still
-                // fully opaque underneath it.
+                const rowStyle = isPivotActive ? undefined : getRowStyle?.(row.originalRow);
                 const pinnedCellBg = rowStyle?.backgroundColor
                   ? { backgroundImage: `linear-gradient(${rowStyle.backgroundColor}, ${rowStyle.backgroundColor})` }
                   : undefined;
@@ -2176,8 +2519,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       </TableCell>
                     )}
                     {orderedVisibleColumnDefs.map((colDef, colIndex) => {
-                       const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
-                       const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
+                       const isLeftPinned = effectivePinnedLeft.includes(colDef.field);
+                       const isRightPinned = effectivePinnedRight.includes(colDef.field);
                        let stickyStyle: React.CSSProperties = {};
                         if (isLeftPinned) {
                           stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
@@ -2191,6 +2534,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           dataIndex === rangeBounds.bottom && colIndex === rangeBounds.right;
                         const isFindMatch = findOpen && findMatchSet.has(`${row.id}|${colDef.field}`);
                         const isActiveFindMatch = isFindMatch && activeMatch?.rowId === row.id && activeMatch?.field === colDef.field;
+                        const isPivotTotalCol = isPivotActive && String(colDef.field).startsWith('__pivot_total__');
 
                         const cellRules = [
                           ...(conditionalFormats || []),
@@ -2212,10 +2556,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           "px-3 py-2 truncate",
                           colDef.editable && "cursor-pointer",
                           (isLeftPinned || isRightPinned) && "sticky-body-cell",
-                          // sticky cells are already positioning contexts for the fill handle
                           isFillCorner && !isLeftPinned && !isRightPinned && "relative",
-                          isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
-                          isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow",
+                          isLeftPinned && effectivePinnedLeft.length > 0 && "pinned-left-shadow",
+                          isRightPinned && effectivePinnedRight.length > 0 && "pinned-right-shadow",
+                          isPivotTotalCol && "font-semibold bg-muted/20",
                           isFocused && !state.editingCell && "cell-focused",
                           isCellInRange(dataIndex, colIndex) && "cell-range-selected",
                           isCellInFillZone(dataIndex, colIndex) && "cell-fill-preview",
@@ -2228,7 +2572,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           ...conditionalStyle,
                           ...stickyStyle
                         }}
-                        title={colDef.sparkline ? undefined : String(getCellValue(row, colDef.field))}
+                        title={colDef.sparkline ? undefined : String(getCellValue(row, colDef.field) ?? '')}
                         onClick={() => handleCellClick(row.id, colDef.field)}
                         onDoubleClick={() => colDef.editable && startEditingCell(row.id, colDef.field)}
                         onMouseDown={(e) => handleCellMouseDown(e, dataIndex, colIndex)}
@@ -2303,14 +2647,43 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       }}
                     />
                   )}
-                  {orderedVisibleColumnDefs.map((colDef) => {
-                    const isLeftPinned = state.pinnedColumns.left.includes(colDef.field);
-                    const isRightPinned = state.pinnedColumns.right.includes(colDef.field);
+                  {orderedVisibleColumnDefs.map((colDef, colIdx) => {
+                    const isLeftPinned = effectivePinnedLeft.includes(colDef.field);
+                    const isRightPinned = effectivePinnedRight.includes(colDef.field);
                     let stickyStyle: React.CSSProperties = {};
                     if (isLeftPinned) {
                       stickyStyle.left = `${stickyOffsets.left[colDef.field] || 0}px`;
                     } else if (isRightPinned) {
                       stickyStyle.right = `${stickyOffsets.right[colDef.field] || 0}px`;
+                    }
+
+                    if (isPivotActive && pivotTableResult) {
+                      const grandVal = pivotTableResult.grandTotalValues[colDef.field];
+                      const isFirstPivotGroupCol = colIdx === 0 && !enableRowSelection;
+                      return (
+                        <TableCell
+                          key={colDef.field}
+                          className={cn(
+                            "px-3 py-2 truncate",
+                            (isLeftPinned || isRightPinned) && "sticky-body-cell",
+                            isLeftPinned && effectivePinnedLeft.length > 0 && "pinned-left-shadow",
+                            isRightPinned && effectivePinnedRight.length > 0 && "pinned-right-shadow"
+                          )}
+                          style={{
+                            width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                            maxWidth: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
+                            ...stickyStyle
+                          }}
+                        >
+                          {isFirstPivotGroupCol
+                            ? 'Grand Total'
+                            : grandVal !== undefined && colDef.cellRenderer
+                              ? colDef.cellRenderer(grandVal, {} as TData)
+                              : grandVal !== undefined && grandVal !== null
+                                ? grandVal.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                : ''}
+                        </TableCell>
+                      );
                     }
 
                     const hasAggregate = !!colDef.aggregate;
@@ -2322,8 +2695,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                         className={cn(
                           "px-3 py-2 truncate",
                           (isLeftPinned || isRightPinned) && "sticky-body-cell",
-                          isLeftPinned && state.pinnedColumns.left.length > 0 && "pinned-left-shadow",
-                          isRightPinned && state.pinnedColumns.right.length > 0 && "pinned-right-shadow"
+                          isLeftPinned && effectivePinnedLeft.length > 0 && "pinned-left-shadow",
+                          isRightPinned && effectivePinnedRight.length > 0 && "pinned-right-shadow"
                         )}
                         style={{
                           width: state.columnWidths[colDef.field] || colDef.defaultWidth || `${DEFAULT_COL_WIDTH}px`,
@@ -2349,7 +2722,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                   colSpan={totalColSpan}
                   className="text-sm text-muted-foreground text-center"
                 >
-                  Displaying {renderedRowsCount} row{renderedRowsCount === 1 ? "" : "s"} on this page.
+                  Displaying {renderedRowsCount} {isPivotActive ? 'pivoted group' : 'row'}{renderedRowsCount === 1 ? "" : "s"} on this page.
                 </TableCell>
               </TableRow>
             </TableFooter>
@@ -2378,7 +2751,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
           currentPage={state.currentPage}
           totalPages={totalPages}
           pageSize={state.pageSize}
-          totalItems={(state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData).length}
+          totalItems={(!isPivotActive && state.groupedBy.length > 0 && !isTreeData ? dataWithGroupHeaders : sortedData).length}
           selectedRowsCount={state.selectedRows.size}
           onPageChange={handlePageChange}
           onPageSizeChange={handlePageSizeChange}
@@ -2386,9 +2759,9 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
         />
       )}
       {contextMenu && (() => {
-        const ctxColDef = colDefsMap.get(contextMenu.colField);
-        const isPinnedLeft = state.pinnedColumns.left.includes(contextMenu.colField);
-        const isPinnedRight = state.pinnedColumns.right.includes(contextMenu.colField);
+        const ctxColDef = activeColDefsMap.get(contextMenu.colField);
+        const isPinnedLeft = effectivePinnedLeft.includes(contextMenu.colField);
+        const isPinnedRight = effectivePinnedRight.includes(contextMenu.colField);
         const menuLeft = Math.max(4, Math.min(contextMenu.x, window.innerWidth - 208));
         const menuTop = Math.max(4, Math.min(contextMenu.y, window.innerHeight - 320));
         const itemClass = "flex w-full items-center rounded-sm px-2 py-1.5 text-sm text-left cursor-default hover:bg-accent hover:text-accent-foreground focus:outline-none focus:bg-accent";
@@ -2424,18 +2797,22 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                 Chart Selection…
               </button>
             )}
-            <div className="my-1 h-px bg-border" role="separator" />
-            {!isPinnedLeft && (
-              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'left'))}>Pin Column Left</button>
-            )}
-            {!isPinnedRight && (
-              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'right'))}>Pin Column Right</button>
-            )}
-            {(isPinnedLeft || isPinnedRight) && (
-              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, null))}>Unpin Column</button>
-            )}
-            {ctxColDef?.hideable !== false && (
-              <button role="menuitem" className={itemClass} onClick={runAndClose(() => handleColumnVisibilityChange(contextMenu.colField, false))}>Hide Column</button>
+            {!isPivotActive && (
+              <>
+                <div className="my-1 h-px bg-border" role="separator" />
+                {!isPinnedLeft && (
+                  <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'left'))}>Pin Column Left</button>
+                )}
+                {!isPinnedRight && (
+                  <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, 'right'))}>Pin Column Right</button>
+                )}
+                {(isPinnedLeft || isPinnedRight) && (
+                  <button role="menuitem" className={itemClass} onClick={runAndClose(() => handlePinColumn(contextMenu.colField, null))}>Unpin Column</button>
+                )}
+                {ctxColDef?.hideable !== false && (
+                  <button role="menuitem" className={itemClass} onClick={runAndClose(() => handleColumnVisibilityChange(contextMenu.colField, false))}>Hide Column</button>
+                )}
+              </>
             )}
             <div className="my-1 h-px bg-border" role="separator" />
             <button role="menuitem" className={itemClass} onClick={runAndClose(handleExportCsv)}>Export as CSV</button>
