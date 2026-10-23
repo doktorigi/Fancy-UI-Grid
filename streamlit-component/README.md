@@ -64,3 +64,9 @@ FANCY_UI_GRID_DEV_URL=http://localhost:5173 streamlit run ../example_app.py
 ```
 
 `npm run build` writes the production bundle to `fancy_ui_grid/frontend_build/` — commit it so pip installs keep working. The frontend imports the grid source from the repo's `src/` via the `@` alias, so grid changes are picked up on the next build; nothing is copied.
+
+## Batch editing and lazy server datasets
+
+Pass `edit_mode="batch"` for draft editing with Review, Save all, and Discard. Column dicts accept `editor`, `editorOptions`, and declarative `validation` rules. Supply `on_batch_save(edits)` to validate and persist a batch in Python; return `None`/`{}` on success or `{ "errors": [{ "rowId": 1, "field": "amount", "message": "..." }] }` to reject it. Managed callbacks require a unique `key`.
+
+Supply `data_source(request)` for lazy server blocks, group expansion, and server pivots. The wrapper handles request IDs and rerun responses. The included `fancy_ui_grid.server.SQLiteDataSource` implements SQL queries and atomic batch saves. Run `streamlit run server_example.py` for the million-row example. See [the full guide](../docs/advanced-workflows.md) for API contracts and scope.

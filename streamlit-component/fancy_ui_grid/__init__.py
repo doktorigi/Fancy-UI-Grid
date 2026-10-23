@@ -40,6 +40,13 @@ def fancy_ui_grid(
     conditional_formats=None,
     server_side=False,
     total_row_count=None,
+    edit_mode="cell",
+    on_batch_save=None,
+    data_source=None,
+    data_source_version=None,
+    server_row_model_options=None,
+    virtualized=False,
+    viewport_height=500,
     height=None,
     key=None,
 ):
@@ -74,6 +81,16 @@ def fancy_ui_grid(
         conditional_formats: List of conditional formatting rule dicts.
         server_side: Handle sorting/filtering/pagination on the server.
         total_row_count: Total count of rows across all pages in server_side mode.
+        edit_mode: ``'cell'`` for immediate edits or ``'batch'`` for review/Save/Discard.
+        on_batch_save: Optional callable receiving camelCase edits (rowId, field,
+            oldValue, value). Return None/{} for success or {errors, message} to
+            reject the entire batch. Requires key. Invoked once per request ID.
+        data_source: Optional callable(request) -> {rows, rowCount, ...}; requires
+            key. See fancy_ui_grid.server.SQLiteDataSource.get_rows.
+        data_source_version: Change to invalidate cached server rows after external writes.
+        server_row_model_options: Dict with blockSize, maxCachedBlocks, maxConcurrentRequests.
+        virtualized: Window local rows instead of paginating.
+        viewport_height: Scrolling viewport height, default 500 px.
         height: Fixed iframe height in px. Default: auto-sized to content.
         key: Streamlit widget key.
 
@@ -86,7 +103,16 @@ def fancy_ui_grid(
             rec.setdefault("id", i)
         data = records
 
-    return _component_func(
+    if edit_mode not in ("cell", "batch"):
+        raise ValueError("edit_mode must be 'cell' or 'batch'")
+    managed = data_source is not None or on_batch_save is not None
+    transport = {"responses": {}, "batches": {}}
+    if managed:
+        if key is None:
+            raise ValueError("A unique key is required for data_source or on_batch_save")
+        import streamlit as st
+        transport = st.session_state.setdefault(f"_fancy_transport_{key}", transport)
+    result = _component_func(
         data=data,
         column_defs=column_defs,
         default_page_size=default_page_size,
@@ -110,7 +136,47 @@ def fancy_ui_grid(
         conditional_formats=conditional_formats,
         server_side=server_side,
         total_row_count=total_row_count,
+        edit_mode=edit_mode,
+        batch_save_enabled=on_batch_save is not None,
+        batch_response=next(reversed(transport["batches"].values()), None) if transport["batches"] else None,
+        data_source_enabled=data_source is not None,
+        data_source_version=data_source_version,
+        server_row_model_options=server_row_model_options or {},
+        server_responses=list(transport["responses"].values()),
+        virtualized=virtualized,
+        viewport_height=viewport_height,
         height=height,
         key=key,
         default={"selected_ids": [], "edits": [], "server_params": None},
     )
+    if managed and result:
+        updated = False
+        if data_source is not None:
+            for pending in result.get("server_requests", []):
+                request_id = pending["id"]
+                if request_id in transport["responses"]:
+                    continue
+                try:
+                    response = {"id": request_id, "result": data_source(pending["request"])}
+                except Exception as error:
+                    response = {"id": request_id, "error": str(error)}
+                transport["responses"][request_id] = response
+                updated = True
+        pending = result.get("batch_request")
+        if on_batch_save is not None and pending and pending["id"] not in transport["batches"]:
+            try:
+                response = on_batch_save(pending["edits"]) or {}
+            except Exception as error:
+                response = {"message": str(error)}
+            transport["batches"][pending["id"]] = {"id": pending["id"], "result": response}
+            updated = True
+        # Keep transport bounded without dropping any currently requested response.
+        active_ids = {request["id"] for request in result.get("server_requests", [])}
+        for request_id in list(transport["responses"])[:-32]:
+            if request_id not in active_ids:
+                del transport["responses"][request_id]
+        for request_id in list(transport["batches"])[:-16]:
+            del transport["batches"][request_id]
+        if updated:
+            st.rerun()
+    return result

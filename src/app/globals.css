@@ -241,6 +241,13 @@
   }
 
   /* Group Header Row */
+  td[data-pending] {
+    box-shadow: inset 0 -3px 0 hsl(var(--primary));
+    background-color: hsl(var(--primary) / 0.08);
+  }
+  td[aria-invalid="true"] {
+    box-shadow: inset 0 0 0 2px hsl(var(--destructive));
+  }
   .group-header-row td {
     @apply bg-muted/70 font-semibold;
   }

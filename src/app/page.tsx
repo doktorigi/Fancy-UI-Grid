@@ -147,6 +147,7 @@ export default function ShowcasePage() {
               <a href="repricing/">App demo →</a>
             </Button>
             <ThemeToggle />
+            <Button asChild variant="outline" size="sm"><a href="workflows/">Editing &amp; server data</a></Button>
           </div>
         </header>
 

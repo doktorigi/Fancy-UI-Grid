@@ -71,6 +71,11 @@ export interface ColumnDefinition<TData = any> {
   filterType?: FilterType;
   hideable?: boolean; // Default true
   editable?: boolean; // Default false
+  editor?: 'text' | 'number' | 'date' | 'boolean' | 'select';
+  editorOptions?: { label: string; value: string | number | boolean }[];
+  cellEditor?: React.ComponentType<GridCellEditorProps<TData>>;
+  validation?: { required?: boolean; min?: number; max?: number; minLength?: number; maxLength?: number; pattern?: string };
+  validate?: (value: any, row: TData) => string | null | undefined;
   pinned?: 'left' | 'right' | null; // For column pinning
   groupable?: boolean; // Default true, whether column can be dragged to grouping panel
   pivotable?: boolean; // Whether column can be pivoted
@@ -88,6 +93,78 @@ export interface ColumnDefinition<TData = any> {
   sparkline?: SparklineColumnOptions<TData>; // Render the cell as an inline mini chart; cellRenderer takes precedence
   conditionalFormats?: ConditionalFormatRule<TData>[]; // Conditional formatting rules specific to this column
   formula?: string; // Excel-style calculated column expression, e.g. "=[price] * [quantity]" or "=IF([margin] > 0.2, 'High', 'Low')"
+}
+
+export interface GridCellEditorProps<TData> {
+  value: any;
+  row: TData;
+  column: ColumnDefinition<TData>;
+  onChange: (value: any) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}
+
+export interface GridEdit<TData = any> {
+  rowId: string | number;
+  field: keyof TData & string;
+  oldValue: any;
+  value: any;
+}
+
+export interface GridValidationError {
+  rowId: string | number;
+  field?: string;
+  message: string;
+}
+
+export interface BatchSaveResult {
+  errors?: GridValidationError[];
+  message?: string;
+}
+
+export type RowValidator<TData> = (row: TData) => string | Record<string, string> | null | undefined;
+
+export type GroupKey = string | number | boolean | null;
+export type ServerAggregates = Record<string, Partial<Record<AggregateFunction, number | null>>>;
+
+/** JSON-safe query. startRow is inclusive, endRow exclusive within groupKeys. */
+export interface ServerRowsRequest<TData = any> {
+  startRow: number;
+  endRow: number;
+  groupKeys: GroupKey[];
+  rowGroupColumns: (keyof TData & string)[];
+  sortModel: SortConfig<TData>[];
+  filterModel: ActiveFilters<TData>;
+  globalFilter: string;
+  globalFilterFields?: string[];
+  pivotMode: boolean;
+  pivotColumns: (keyof TData & string)[];
+  valueColumns: PivotValueConfig<TData>[];
+}
+
+export interface ServerRow<TData> {
+  data: TData;
+  group?: { key: GroupKey; childCount?: number; leafCount?: number; aggregates?: ServerAggregates };
+}
+
+export interface ServerRowsResult<TData> {
+  rows: ServerRow<TData>[];
+  /** Exact count at this group level, after filtering (not the full tree size). */
+  rowCount: number;
+  aggregates?: ServerAggregates;
+  /** Stable schema for the entire query, including columns absent from this block. */
+  pivotResultColumns?: ColumnDefinition<TData>[];
+  grandTotalValues?: Record<string, number | null>;
+}
+
+export interface GridDataSource<TData> {
+  getRows: (request: ServerRowsRequest<TData>, signal: AbortSignal) => Promise<ServerRowsResult<TData>>;
+}
+
+export interface ServerRowModelOptions {
+  blockSize?: number; // Default 100
+  maxCachedBlocks?: number; // Default 10, global across group routes
+  maxConcurrentRequests?: number; // Default 4
 }
 
 export type GridDensity = 'compact' | 'normal' | 'comfortable';
@@ -215,6 +292,10 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   pageSizeOptions?: number[];
   enableRowSelection?: boolean;
   onCellEdit?: (rowId: string | number, field: keyof TData & string, value: any) => void;
+  editMode?: 'cell' | 'batch';
+  onBatchSave?: (edits: GridEdit<TData>[]) => Promise<BatchSaveResult | void> | BatchSaveResult | void;
+  validateRow?: RowValidator<TData>;
+  onPendingEditsChange?: (edits: GridEdit<TData>[]) => void;
   onSelectionChange?: (selectedIds: (string | number)[]) => void;
   isTreeData?: boolean;
   treeColumn?: keyof TData & string; // Specifies which column shows tree controls
@@ -241,6 +322,9 @@ export interface DataGridProps<TData extends HierarchicalData<TData>> {
   enableRangeChart?: boolean; // "Chart Selection" in the context menu: chart the selected range in a dialog. Default true; needs range selection.
   conditionalFormats?: ConditionalFormatRule<TData>[]; // Grid-level conditional formatting rules applied across columns
   serverSide?: boolean; // If true, filtering, sorting, and pagination are handled on the server
+  dataSource?: GridDataSource<TData>; // Enables the lazy server row model and virtual scrolling
+  serverRowModelOptions?: ServerRowModelOptions;
+  dataSourceVersion?: string | number; // Change after external writes to invalidate cached data
   totalRowCount?: number; // Total count of rows across all pages when serverSide is true
   onServerParamsChange?: (params: {
     page: number;

@@ -36,6 +36,11 @@ import { DataGridStatusBar } from './DataGridStatusBar';
 import { DataGridFindBar } from './DataGridFindBar';
 import { Sparkline } from './Sparkline';
 import { RangeChartDialog } from './RangeChartDialog';
+import { DataGridEditPanel } from './DataGridEditPanel';
+import { DataGridCellEditor } from './DataGridCellEditor';
+import { useGridDrafts } from '@/hooks/useGridDrafts';
+import { useServerRowModel } from '@/hooks/useServerRowModel';
+import { cellKey, parseEditValue, stageEdits, validateDrafts } from '@/lib/gridEditing';
 import { extractRangeChartData, type RangeChartData } from '@/lib/rangeChart';
 import { applyFormulaColumnsToRows } from '@/lib/formulaEngine';
 import {
@@ -60,7 +65,6 @@ import {
   findCellMatches,
   parseClipboardText,
   sortRows,
-  toStrictNumber,
 } from '@/lib/gridProcessing';
 import {
   buildPivotTable,
@@ -81,18 +85,22 @@ const DEFAULT_COL_WIDTH = 150; // px
 const LOCAL_STORAGE_KEY = 'ngxMatDataGridState';
 
 export function DataGrid<TData extends HierarchicalData<TData>>({
-  data: initialData,
+  data: suppliedData,
   columnDefs: initialColumnDefs,
   defaultPageSize = 10,
   pageSizeOptions = [10, 25, 50, 100],
   enableRowSelection = true,
   onCellEdit,
+  editMode = 'cell',
+  onBatchSave,
+  validateRow,
+  onPendingEditsChange,
   onSelectionChange,
   isTreeData = false,
   treeColumn: specifiedTreeColumn,
   enableGroupingPanel = false,
   storageKey = LOCAL_STORAGE_KEY,
-  virtualized = false,
+  virtualized: requestedVirtualized = false,
   rowHeight = 44,
   virtualizedMaxHeight = 500,
   detailRenderer,
@@ -112,7 +120,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   enableRowReorder = false,
   onRowsReordered,
   conditionalFormats,
-  serverSide = false,
+  serverSide: requestedServerSide = false,
+  dataSource,
+  serverRowModelOptions,
+  dataSourceVersion,
   totalRowCount,
   onServerParamsChange,
   enableFloatingFilters = false,
@@ -130,6 +141,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   formulaColumns: initialFormulaColumns = [],
   onFormulaColumnsChange,
 }: DataGridProps<TData>) {
+  const serverSide = requestedServerSide || !!dataSource;
+  const virtualized = requestedVirtualized || !!dataSource;
   const tableWrapperRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
@@ -230,7 +243,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   const effectiveRowHeight = rowHeight !== 44 ? rowHeight : densityMetrics.defaultRowHeight;
 
   const isPivotActive = !!state.pivotMode && !isTreeData;
-  const masterDetail = !!detailRenderer && !isPivotActive;
+  const masterDetail = !!detailRenderer && !isPivotActive && !dataSource;
   // Master-detail expansion is deliberately not persisted to localStorage — detail
   // panels are transient drill-downs, not layout configuration.
   const [expandedDetails, setExpandedDetails] = React.useState<Set<string | number>>(new Set());
@@ -264,12 +277,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   type EditRecord = { rowId: string | number; field: keyof TData & string; prevValue: any; nextValue: any };
   const undoStackRef = React.useRef<EditRecord[][]>([]);
   const redoStackRef = React.useRef<EditRecord[][]>([]);
+  const activeEditorRef = React.useRef<{ rowId: string | number; field: keyof TData & string; value: any } | null>(null);
 
-  const canEditCells = !!onCellEdit && !isPivotActive;
-  const fillHandleEnabled = enableFillHandle && enableRangeSelection && canEditCells;
-  const pasteEnabled = enableClipboardPaste && canEditCells;
-  const undoRedoEnabled = enableUndoRedo && canEditCells;
-  const rowReorderEnabled = enableRowReorder && !!onRowsReordered && !isTreeData && !isPivotActive;
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -494,10 +503,41 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     [combinedColumnDefs]
   );
 
+  const remote = useServerRowModel<TData>({
+    source: dataSource,
+    query: {
+      rowGroupColumns: state.groupedBy,
+      sortModel: state.multiSortConfig?.length ? state.multiSortConfig : state.sortConfig ? [state.sortConfig] : [],
+      filterModel: state.columnFilters, globalFilter: state.globalFilter,
+      globalFilterFields: globalFilterFields ?? state.visibleColumns,
+      pivotMode: isPivotActive, pivotColumns: state.pivotColumns ?? [],
+      valueColumns: isPivotActive ? state.pivotValues ?? [] : deriveDefaultPivotValues(combinedColumnDefs),
+    },
+    options: serverRowModelOptions, scrollTop, rowHeight: effectiveRowHeight,
+    height: virtualizedMaxHeight, version: dataSourceVersion,
+  });
+  React.useEffect(() => {
+    if (dataSource && scrollContainerRef.current) { scrollContainerRef.current.scrollTop = 0; setScrollTop(0); }
+  }, [remote.model, dataSource]);
+  const initialData = React.useMemo(() => dataSource
+    ? remote.slots.map(slot => slot.row?.data ?? ({ id: `__loading_${JSON.stringify([slot.path, slot.localIndex])}` } as TData))
+    : suppliedData, [dataSource, remote.slots, suppliedData]);
+  const draft = useGridDrafts({
+    rows: initialData, columns: combinedColumnDefs, onBatchSave, validateRow, onPendingEditsChange,
+    onSaved: () => { undoStackRef.current = []; redoStackRef.current = []; if (dataSource) remote.refresh(); },
+  });
+  const [editErrors, setEditErrors] = React.useState<import('@/types/data-grid').GridValidationError[]>([]);
   const dataWithFormulas = React.useMemo(
-    () => applyFormulaColumnsToRows(initialData || [], activeFormulaSpecs, isTreeData),
-    [initialData, activeFormulaSpecs, isTreeData]
+    () => dataSource ? draft.data : applyFormulaColumnsToRows(draft.data || [], activeFormulaSpecs, isTreeData),
+    [draft.data, activeFormulaSpecs, isTreeData, dataSource, isPivotActive]
   );
+  const canEditCells = (editMode === 'batch' ? !!onBatchSave : !!onCellEdit) && !isPivotActive && !draft.saving;
+  const fillHandleEnabled = enableFillHandle && enableRangeSelection && canEditCells;
+  const pasteEnabled = enableClipboardPaste && canEditCells;
+  const undoRedoEnabled = enableUndoRedo && canEditCells;
+  const rowReorderEnabled = enableRowReorder && !!onRowsReordered && !isTreeData && !isPivotActive && !dataSource && !draft.edits.length;
+  const pendingCellKeys = React.useMemo(() => new Set(draft.edits.map(edit => cellKey(edit.rowId, edit.field))), [draft.edits]);
+  const errorCellKeys = React.useMemo(() => new Map([...draft.errors, ...editErrors].map(error => [cellKey(error.rowId, error.field ?? ''), error.message])), [draft.errors, editErrors]);
 
   const getUniqueColumnValues = React.useCallback((field: keyof TData & string): string[] => {
     if (!dataWithFormulas) return [];
@@ -572,6 +612,15 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }, []);
 
   const baseDataForProcessing = React.useMemo<ProcessedRow<TData>[]>(() => {
+    if (dataSource) return dataWithFormulas.map((item, index) => {
+      const slot = remote.slots[index];
+      return {
+        originalRow: item, id: item.id, level: slot.path.length, hasChildren: !!slot.row?.group,
+        isGroupHeader: !!slot.row?.group || !slot.row, isExpanded: slot.expanded,
+        groupField: state.groupedBy[slot.path.length], groupValue: slot.row?.group?.key,
+        groupKey: JSON.stringify([...slot.path, slot.row?.group?.key]), serverSlot: slot,
+      };
+    });
     if (isTreeData) {
       return flattenTreeData(dataWithFormulas || [], state.expandedRows);
     }
@@ -582,7 +631,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       hasChildren: false,
       isExpanded: false,
     }));
-  }, [dataWithFormulas, isTreeData, flattenTreeData, state.expandedRows]);
+  }, [dataWithFormulas, isTreeData, flattenTreeData, state.expandedRows, dataSource, remote.slots, state.groupedBy]);
 
   const handleSort = (field: keyof TData & string, multiSort = false) => {
     setState((prevState) => {
@@ -692,6 +741,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   };
 
   const handleToggleExpandGroup = (groupKey: string) => {
+    if (dataSource) {
+      const row = baseDataForProcessing.find(item => item.groupKey === groupKey);
+      if (row?.serverSlot) remote.model?.toggle(row.serverSlot);
+      return;
+    }
     setState(prevState => {
       const newExpandedGroups = new Set(prevState.expandedGroups);
       if (newExpandedGroups.has(groupKey)) {
@@ -1094,10 +1148,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
 
   const startEditingCell = (rowId: string | number, field: keyof TData & string) => {
-    if (isPivotActive) return;
+    if (!canEditCells) return;
     const columnDef = processedColumnDefs.find(col => col.field === field);
     const row = baseDataForProcessing.find(r => r.id === rowId);
-    if (columnDef?.editable && row) {
+    if (columnDef?.editable && !columnDef.formula && row && !row.isGroupHeader) {
+      activeEditorRef.current = { rowId, field, value: getCellValue(row, field) };
       setState(prevState => ({
         ...prevState,
         editingCell: { rowId, field },
@@ -1112,16 +1167,11 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   };
 
 
-  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setState(prevState => ({ ...prevState, editInputValue: e.target.value }));
-  };
-
   // Central commit path for every grid-driven edit (inline, paste, fill). Captures
-  // prior values so undo can restore them, then hands each cell to onCellEdit — the
-  // parent stays the data owner.
+  // prior values for undo, then stages a batch draft or calls the immediate callback.
   type PendingEdit = { rowId: string | number; field: keyof TData & string; value: any };
   const applyEdits = (edits: PendingEdit[]) => {
-    if (!onCellEdit || edits.length === 0) return;
+    if (!canEditCells || edits.length === 0) return;
     const rowById = new Map(baseDataForProcessing.map(r => [r.id, r]));
     const batch: EditRecord[] = [];
     edits.forEach(edit => {
@@ -1130,8 +1180,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       if (prevValue === edit.value) return; // no-ops don't pollute undo history
       batch.push({ rowId: edit.rowId, field: edit.field, prevValue, nextValue: edit.value });
     });
-    if (batch.length === 0) return;
-    batch.forEach(e => onCellEdit(e.rowId, e.field, e.nextValue));
+    if (batch.length === 0) { setEditErrors([]); return; }
+    if (editMode === 'batch') draft.stage(edits);
+    else {
+      const errors = validateDrafts(stageEdits(new Map(), initialData, edits), initialData, combinedColumnDefs, validateRow);
+      setEditErrors(errors);
+      if (errors.length) return;
+      batch.forEach(e => onCellEdit?.(e.rowId, e.field, e.nextValue));
+    }
     if (undoRedoEnabled) {
       undoStackRef.current.push(batch);
       if (undoStackRef.current.length > 100) undoStackRef.current.shift();
@@ -1141,61 +1197,46 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
 
   const handleUndo = () => {
     const batch = undoStackRef.current.pop();
-    if (!batch || !onCellEdit) return;
-    [...batch].reverse().forEach(e => onCellEdit(e.rowId, e.field, e.prevValue));
+    if (!batch || !canEditCells) return;
+    if (editMode === 'batch') draft.stage([...batch].reverse().map(e => ({ rowId: e.rowId, field: e.field, value: e.prevValue })));
+    else [...batch].reverse().forEach(e => onCellEdit?.(e.rowId, e.field, e.prevValue));
     redoStackRef.current.push(batch);
   };
 
   const handleRedo = () => {
     const batch = redoStackRef.current.pop();
-    if (!batch || !onCellEdit) return;
-    batch.forEach(e => onCellEdit(e.rowId, e.field, e.nextValue));
+    if (!batch || !canEditCells) return;
+    if (editMode === 'batch') draft.stage(batch.map(e => ({ rowId: e.rowId, field: e.field, value: e.nextValue })));
+    else batch.forEach(e => onCellEdit?.(e.rowId, e.field, e.nextValue));
     undoStackRef.current.push(batch);
   };
 
-  // Mirrors the inline-edit coercion: numeric columns take numbers only. Returns
-  // undefined when the raw value can't be coerced — callers skip that cell.
+  // Paste/fill and inline editors share parsing; invalid values remain available for validation.
   const coerceValueForCell = (rowId: string | number, field: keyof TData & string, raw: any): any => {
     const columnDef = colDefsMap.get(field);
     const originalRowData = baseDataForProcessing.find(r => r.id === rowId)?.originalRow;
-    const isNumericColumn = columnDef?.filterType === 'number' || (originalRowData && typeof originalRowData[field] === 'number');
-    if (isNumericColumn) {
-      const num = toStrictNumber(raw);
-      return num === null ? undefined : num;
-    }
+    if (columnDef) return parseEditValue(columnDef, raw, originalRowData?.[field]);
     return raw;
   };
 
   const handleEditCommit = () => {
-    if (state.editingCell && onCellEdit) {
-      const { rowId, field } = state.editingCell;
-      let valueToCommit = state.editInputValue;
+    const editor = activeEditorRef.current;
+    activeEditorRef.current = null;
+    if (editor && canEditCells) {
+      const { rowId, field } = editor;
+      let valueToCommit = editor.value;
       const columnDef = processedColumnDefs.find(col => col.field === field);
       const originalRowData = baseDataForProcessing.find(r => r.id === rowId)?.originalRow;
 
-      if (columnDef?.filterType === 'number' || (originalRowData && typeof originalRowData[field] === 'number')) {
-        valueToCommit = parseFloat(state.editInputValue);
-        if (isNaN(valueToCommit) && originalRowData) {
-          valueToCommit = getCellValue({originalRow: originalRowData} as ProcessedRow<TData>, field);
-        }
-      }
+      if (columnDef) valueToCommit = parseEditValue(columnDef, editor.value, originalRowData?.[field]);
       applyEdits([{ rowId, field, value: valueToCommit }]);
     }
     setState(prevState => ({ ...prevState, editingCell: null, editInputValue: '' }));
   };
 
   const handleEditCancel = () => {
+    activeEditorRef.current = null;
     setState(prevState => ({ ...prevState, editingCell: null, editInputValue: '' }));
-  };
-
-  const handleEditInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleEditCommit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleEditCancel();
-    }
   };
 
   // Callers routinely pass globalFilterFields as an inline literal; key the memo on
@@ -1231,6 +1272,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   // Build pivot table when Pivot Mode is active
   const pivotTableResult = React.useMemo(() => {
     if (!isPivotActive) return null;
+    if (dataSource) return {
+      columns: remote.model?.metadata.pivotResultColumns ?? processedColumnDefs,
+      rows: baseDataForProcessing, grandTotalValues: remote.model?.metadata.grandTotalValues ?? {},
+    };
     return buildPivotTable({
       rows: filteredData,
       columns: processedColumnDefs,
@@ -1239,7 +1284,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       valueConfigs: state.pivotValues,
       showRowTotals: true,
     });
-  }, [isPivotActive, filteredData, processedColumnDefs, state.groupedBy, state.pivotColumns, state.pivotValues]);
+  }, [isPivotActive, filteredData, processedColumnDefs, state.groupedBy, state.pivotColumns, state.pivotValues, dataSource, remote.model, remote.slots, baseDataForProcessing]);
 
   const activeColDefsMap = React.useMemo(() => {
     if (isPivotActive && pivotTableResult) {
@@ -1249,18 +1294,19 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }, [isPivotActive, pivotTableResult, colDefsMap]);
 
   const sortedData = React.useMemo(() => {
+    if (dataSource) return filteredData;
     if (isPivotActive && pivotTableResult) {
       return sortRows(pivotTableResult.rows, activeColDefsMap, activeSortConfigs, [], false);
     }
     if (serverSide) return filteredData;
     return sortRows(filteredData, colDefsMap, activeSortConfigs, state.groupedBy, isTreeData);
-  }, [isPivotActive, pivotTableResult, activeColDefsMap, serverSide, filteredData, activeSortConfigs, state.groupedBy, colDefsMap, isTreeData]);
+  }, [isPivotActive, pivotTableResult, activeColDefsMap, serverSide, filteredData, activeSortConfigs, state.groupedBy, colDefsMap, isTreeData, dataSource]);
 
   const onServerParamsChangeRef = React.useRef(onServerParamsChange);
   onServerParamsChangeRef.current = onServerParamsChange;
 
   React.useEffect(() => {
-    if (!serverSide) return;
+    if (!serverSide || dataSource) return;
     onServerParamsChangeRef.current?.({
       page: state.currentPage,
       pageSize: state.pageSize,
@@ -1289,7 +1335,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }, [sortedData, isPivotActive]);
 
   const dataWithGroupHeaders = React.useMemo(() => {
-    if (isPivotActive || state.groupedBy.length === 0 || isTreeData) { 
+    if (dataSource || isPivotActive || state.groupedBy.length === 0 || isTreeData) {
       return sortedData;
     }
 
@@ -1356,7 +1402,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     };
 
     return buildGroupedRows(sortedData, 0, "", 0);
-  }, [isPivotActive, sortedData, state.groupedBy, state.expandedGroups, isTreeData]);
+  }, [isPivotActive, sortedData, state.groupedBy, state.expandedGroups, isTreeData, dataSource]);
 
 
   const dataToPaginate = React.useMemo(() => {
@@ -1414,6 +1460,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   }, [virtualized, displayRows, effectiveRowHeight, detailRowHeight]);
 
   const { visibleDisplayRows, topSpacer, bottomSpacer } = React.useMemo(() => {
+    if (dataSource) return { visibleDisplayRows: displayRows, topSpacer: remote.topSpacer, bottomSpacer: remote.bottomSpacer };
     if (!virtualized || !rowOffsets) {
       return { visibleDisplayRows: displayRows, topSpacer: 0, bottomSpacer: 0 };
     }
@@ -1435,7 +1482,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       topSpacer: rowOffsets[sIdx],
       bottomSpacer: rowOffsets[displayRows.length] - rowOffsets[eIdx],
     };
-  }, [virtualized, rowOffsets, displayRows, scrollTop, virtualizedMaxHeight]);
+  }, [virtualized, rowOffsets, displayRows, scrollTop, virtualizedMaxHeight, dataSource, remote.topSpacer, remote.bottomSpacer]);
 
 
   const orderedVisibleColumnDefs = React.useMemo(() => {
@@ -1604,7 +1651,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
   };
 
   const applyFill = () => {
-    if (!fillZone || !rangeBounds || !onCellEdit) return;
+    if (!fillZone || !rangeBounds || !canEditCells) return;
     const edits: PendingEdit[] = [];
     const cols = orderedVisibleColumnDefs;
 
@@ -1755,7 +1802,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     }));
     // Virtualization windows unrendered rows out, so scrollIntoView can't reach them —
     // jump the scroll container to the match's computed offset instead.
-    if (virtualized && rowOffsets && scrollContainerRef.current) {
+    if (virtualized && !dataSource && rowOffsets && scrollContainerRef.current) {
       const displayIdx = displayRows.findIndex(d => !d.isDetail && d.dataIndex === match.rowIndex);
       if (displayIdx >= 0) {
         scrollContainerRef.current.scrollTop = Math.max(0, rowOffsets[displayIdx] - virtualizedMaxHeight / 2);
@@ -2187,21 +2234,12 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     const cellValue = getCellValue(row, col.field);
 
     if (state.editingCell && state.editingCell.rowId === row.id && state.editingCell.field === col.field) {
-      const colDef = processedColumnDefs.find(c => c.field === col.field);
-      const originalRowDataForEdit = baseDataForProcessing.find(r => r.id === row.id)?.originalRow;
-      const inputType = colDef?.filterType === 'number' || (originalRowDataForEdit && typeof getCellValue({originalRow: originalRowDataForEdit} as ProcessedRow<TData>,col.field) === 'number') ? 'number' : 'text';
-      
-      return (
-        <Input
-          type={inputType}
-          value={state.editInputValue}
-          onChange={handleEditInputChange}
-          onBlur={handleEditCommit}
-          onKeyDown={handleEditInputKeyDown}
-          autoFocus
-          className="h-full p-1 border-ring"
-        />
-      );
+      return <DataGridCellEditor column={col} row={row.originalRow} value={state.editInputValue}
+        onChange={value => {
+          if (activeEditorRef.current) activeEditorRef.current.value = value;
+          setState(prev => ({ ...prev, editInputValue: value }));
+        }}
+        onCommit={handleEditCommit} onCancel={handleEditCancel} />;
     }
 
     if (isTreeData && treeColumn && col.field === treeColumn) {
@@ -2288,6 +2326,14 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
     setState(prevState => ({ ...prevState, globalFilter: '', columnFilters: {}, currentPage: 1 }));
   };
 
+  const formatServerAggregate = (values: import('@/types/data-grid').ServerAggregates | undefined, column: ColumnDefinition<TData>) => {
+    const functions = Array.isArray(column.aggregate) ? column.aggregate : column.aggregate ? [column.aggregate] : [];
+    return functions.map(fn => {
+      const value = values?.[column.field]?.[fn];
+      return value === undefined || value === null ? '' : `${functions.length > 1 ? fn + ': ' : ''}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    }).filter(Boolean).join(' / ');
+  };
+
 
   return (
     <div
@@ -2297,6 +2343,17 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       onKeyDown={handleGridKeyDown}
       onPaste={handlePaste}
     >
+      {editMode === 'batch' && <DataGridEditPanel edits={draft.edits} errors={draft.errors} message={draft.message}
+        saving={draft.saving} editing={!!state.editingCell} canSave={!!onBatchSave} onSave={() => { handleEditCommit(); void draft.save(); }}
+        onDiscard={() => { handleEditCancel(); draft.discard(); undoStackRef.current = []; redoStackRef.current = []; }}
+        onDiscardCell={(id, field) => { draft.discardCell(id, field); undoStackRef.current = []; redoStackRef.current = []; }} />}
+      {editMode === 'cell' && editErrors.length > 0 && <div role="alert" className="border-b p-3 text-sm text-destructive">
+        {editErrors.map((error, i) => <div key={i}>Row {error.rowId}, {error.field}: {error.message}</div>)}
+      </div>}
+      {dataSource && <div className="flex items-center gap-3 border-b px-4 py-2 text-sm" aria-live="polite">
+        <span>{remote.model?.rootRowCount === undefined ? 'Loading rows…' : `${remote.model.rootRowCount.toLocaleString()} ${state.groupedBy.length && !isPivotActive ? 'top-level groups' : 'rows'}`}{remote.model?.loading && remote.model.rootRowCount !== undefined ? ' · Loading…' : ''}</span>
+        <Button size="sm" variant="ghost" disabled={draft.saving} onClick={() => remote.refresh()}>Refresh data</Button>
+      </div>}
       {isPivotActive ? (
         <DataGridPivotPanel
           allColumns={processedColumnDefs}
@@ -2368,7 +2425,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
               Pivot Mode
             </Button>
           )}
-          {enableFormulaColumns && !isPivotActive && (
+          {enableFormulaColumns && !isPivotActive && !dataSource && (
             <DataGridFormulaDialog
               allColumns={processedColumnDefs}
               formulaColumns={state.formulaColumns || []}
@@ -2438,6 +2495,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       )}
       <div
         ref={scrollContainerRef}
+        data-grid-viewport
         onScroll={handleScroll}
         className={cn(
           "overflow-x-auto relative",
@@ -2700,6 +2758,13 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
             )}
             {visibleDisplayRows.length > 0 ? (
               visibleDisplayRows.map(({ row, isDetail, dataIndex }) => {
+                if (row.serverSlot && !row.serverSlot.row) return <TableRow key={row.id} style={{ height: effectiveRowHeight }}>
+                  <TableCell colSpan={totalColSpan} className="px-3 py-0">
+                    {row.serverSlot.status === 'error' ? <div className="flex items-center gap-2 text-destructive" role="alert">
+                      <span>{row.serverSlot.error}</span><Button variant="outline" size="sm" onClick={() => remote.model?.retry(row.serverSlot)}>Retry</Button>
+                    </div> : <span className="text-muted-foreground" role="status">Loading…</span>}
+                  </TableCell>
+                </TableRow>;
                 if (isDetail) {
                   return (
                     <TableRow key={`${row.id}-detail`} className="detail-row hover:bg-transparent">
@@ -2719,26 +2784,27 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                   const groupColDef = colDefsMap.get(row.groupField as keyof TData & string);
                   const groupHeaderText = groupColDef ? groupColDef.headerText : String(row.groupField);
                   return (
-                    <TableRow key={row.id} className="group-header-row">
+                    <TableRow key={row.id} className="group-header-row" style={dataSource ? { height: effectiveRowHeight } : undefined}>
                       <TableCell
                         colSpan={totalColSpan}
                         className={cn(densityMetrics.groupCellPaddingClass, "cursor-pointer")}
-                        onClick={() => row.groupKey && handleToggleExpandGroup(row.groupKey)}
+                        onClick={() => row.serverSlot ? remote.model?.toggle(row.serverSlot) : row.groupKey && handleToggleExpandGroup(row.groupKey)}
                       >
                         <div className="flex items-center" style={{ paddingLeft: `${row.level * 1.5}rem` }}>
                            <button
                               className="mr-1 p-0.5 rounded hover:bg-accent focus:outline-none"
                               aria-label={row.isExpanded ? `Collapse group ${row.groupValue}` : `Expand group ${row.groupValue}`}
+                              aria-expanded={row.isExpanded}
                             >
                               {row.isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                             </button>
                           <strong>{groupHeaderText}:</strong>&nbsp;{String(row.groupValue)}
                           <span className="ml-2 text-xs text-muted-foreground">
-                            ({row.groupItems?.length ?? 0} item{(row.groupItems?.length ?? 0) === 1 ? '' : 's'}
+                            ({row.serverSlot?.row?.group?.leafCount ?? row.groupItems?.length ?? 0} items
                             {orderedVisibleColumnDefs
                               .filter(c => c.aggregate)
                               .map(c => {
-                                const aggValue = computeAggregate(row.groupItems || [], c);
+                                const aggValue = row.serverSlot ? formatServerAggregate(row.serverSlot.row?.group?.aggregates, c) : computeAggregate(row.groupItems || [], c);
                                 const label = typeof c.aggregate === 'string' ? aggregateLabels[c.aggregate] : '';
                                 return aggValue ? ` · ${label ? label + ' ' : ''}${c.headerText}: ${aggValue}` : '';
                               })
@@ -2762,7 +2828,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                       draggedRowId === row.id && "opacity-50",
                       rowDropTarget?.rowId === row.id && (rowDropTarget.position === 'above' ? "row-drop-above" : "row-drop-below")
                     )}
-                    style={rowStyle}
+                    style={{ ...rowStyle, ...(dataSource ? { height: effectiveRowHeight } : {}) }}
                     onDragOver={rowReorderActive && draggedRowId !== null ? (e) => handleRowDragOver(e, row.id) : undefined}
                     onDrop={rowReorderActive && draggedRowId !== null ? handleRowDrop : undefined}
                   >
@@ -2887,7 +2953,10 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                           ...conditionalStyle,
                           ...stickyStyle
                         }}
-                        title={colDef.sparkline ? undefined : String(getCellValue(row, colDef.field) ?? '')}
+                        data-pending={pendingCellKeys.has(cellKey(row.id, colDef.field)) || undefined}
+                        aria-invalid={errorCellKeys.has(cellKey(row.id, colDef.field)) || undefined}
+                        data-validation-error={errorCellKeys.get(cellKey(row.id, colDef.field))}
+                        title={errorCellKeys.get(cellKey(row.id, colDef.field)) ?? (colDef.sparkline ? undefined : String(getCellValue(row, colDef.field) ?? ''))}
                         onClick={() => handleCellClick(row.id, colDef.field)}
                         onDoubleClick={() => colDef.editable && startEditingCell(row.id, colDef.field)}
                         onMouseDown={(e) => handleCellMouseDown(e, dataIndex, colIndex)}
@@ -3002,7 +3071,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                     }
 
                     const hasAggregate = !!colDef.aggregate;
-                    const aggVal = hasAggregate ? computeAggregate(sortedData, colDef) : '';
+                    const aggVal = hasAggregate ? dataSource ? formatServerAggregate(remote.model?.metadata.aggregates, colDef) : computeAggregate(sortedData, colDef) : '';
 
                     return (
                       <TableCell
@@ -3037,7 +3106,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
                   colSpan={totalColSpan}
                   className="text-sm text-muted-foreground text-center"
                 >
-                  Displaying {renderedRowsCount} {isPivotActive ? 'pivoted group' : 'row'}{renderedRowsCount === 1 ? "" : "s"} on this page.
+                  {dataSource ? `Displaying ${renderedRowsCount} loaded rows. Totals are calculated by the server.` : `Displaying ${renderedRowsCount} ${isPivotActive ? 'pivoted groups' : 'rows'} on this page.`}
                 </TableCell>
               </TableRow>
             </TableFooter>
@@ -3046,8 +3115,8 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       </div>
       {enableStatusBar && (
         <DataGridStatusBar
-          filteredRowCount={sortedData.length}
-          totalRowCount={baseDataForProcessing.length}
+          filteredRowCount={dataSource ? remote.model?.rootRowCount ?? 0 : sortedData.length}
+          totalRowCount={dataSource ? remote.model?.rootRowCount ?? 0 : baseDataForProcessing.length}
           selectedRowCount={state.selectedRows.size}
           rangeCellCount={rangeCellCount}
           rangeStats={rangeStats}
@@ -3056,7 +3125,7 @@ export function DataGrid<TData extends HierarchicalData<TData>>({
       {virtualized ? (
         <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t gap-4">
           <div className="text-sm text-muted-foreground">
-            {state.selectedRows.size > 0
+            {dataSource ? `${state.selectedRows.size} selected · Copy, find, charts, and export use the loaded viewport.` : state.selectedRows.size > 0
               ? `${state.selectedRows.size} of ${sortedData.length} row(s) selected.`
               : sortedData.length > 0 ? `Showing all ${sortedData.length} items (virtualized).` : 'No items to display.'}
           </div>
