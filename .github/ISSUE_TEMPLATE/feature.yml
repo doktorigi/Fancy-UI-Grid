@@ -1,0 +1,57 @@
+name: Feature / roadmap contribution
+description: Propose a feature or scope a contribution from the roadmap.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See the [contributor roadmap](https://github.com/doktorigi/Fancy-UI-Grid/blob/main/ROADMAP.md) for easy, medium, and big ideas.
+        Search existing issues for the roadmap ID first. If the task already has an issue, volunteer there instead of opening a duplicate.
+        For roadmap work, replace the title prefix with its ID, for example `[E2] Search the column chooser`.
+  - type: input
+    id: roadmap_id
+    attributes:
+      label: Roadmap ID
+      description: Optional for new ideas.
+      placeholder: E2, M5, B1, or a new idea
+  - type: textarea
+    id: benefit
+    attributes:
+      label: What would this help users do?
+      description: Describe a concrete use case and what the grid does today.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Smallest useful contribution
+      description: Describe the first deliverable, likely starting files, and any later milestones. Link related issues or an AG Grid example if useful.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How will we know it is done?
+      description: List observable behavior, important edge cases, and a demo or check that proves it works.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: React, Streamlit, and data modes
+      description: Which interfaces and local/server modes should this cover? Note follow-ups or decisions you need help with.
+    validations:
+      required: true
+  - type: dropdown
+    id: involvement
+    attributes:
+      label: How would you like to contribute?
+      options:
+        - I would like to implement this
+        - I would like to help with design, docs, examples, or testing
+        - I am proposing an idea for others
+    validations:
+      required: true

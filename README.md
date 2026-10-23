@@ -9,6 +9,8 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 
 **New in v1.1.0:** [Try batch editing and lazy server data](https://doktorigi.github.io/Fancy-UI-Grid/workflows/). The hosted demo uses a 25,000-row browser preview; [run the SQLite example](docs/advanced-workflows.md#sqlite-example-with-one-million-rows) for one million database records. See the [release notes](docs/releases/v1.1.0.md).
 
+**Want to contribute?** Explore the [contributor roadmap](ROADMAP.md): 18 future features across easy, medium, and big projects, with starting files and clear completion criteria.
+
 ## Features
 
 * **Validated Batch Editing** — opt into `editMode="batch"` to stage inline/paste/fill changes, validate cells and whole rows, review original/pending values, and Save all or Discard. Includes typed/custom editors, asynchronous saves, server error feedback, and draft undo/redo. React and Streamlit supported.
@@ -164,6 +166,8 @@ See [`streamlit-component/README.md`](streamlit-component/README.md) for details
 | Ctrl/Cmd + F | Open find-in-grid (Enter = next match, Shift+Enter = previous) |
 
 ## Contributing
+
+Choose a task from the [future features roadmap](ROADMAP.md), from searchable column menus and export options to advanced filters and wide-grid virtualization. Each idea includes a scoped first contribution and AG Grid references. Use the [feature issue template](https://github.com/doktorigi/Fancy-UI-Grid/issues/new?template=feature.yml) to propose a contribution, or join an existing issue for that roadmap ID.
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [`good first issue` label](https://github.com/doktorigi/Fancy-UI-Grid/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
