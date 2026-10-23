@@ -13,8 +13,9 @@ export function DataGridEditPanel({ edits, errors, message, saving, editing, can
     <div className="flex flex-wrap items-center gap-3">
       <span className="text-sm" role="status">{edits.length} pending change{edits.length === 1 ? '' : 's'}{errors.length ? ` · ${errors.length} validation error(s)` : ''}</span>
       <Button size="sm" variant="outline" onClick={() => setOpen(!open)} aria-expanded={open}>Review changes</Button>
-      <Button size="sm" onClick={onSave} disabled={saving || (!edits.length && !editing) || !canSave || (errors.length > 0 && !editing)}>{saving ? 'Saving…' : 'Save all'}</Button>
-      <Button size="sm" variant="ghost" onClick={onDiscard} disabled={saving || (!edits.length && !editing)}>Discard all</Button>
+      {/* Keep the editor focused until click: blur can remove validation text and move these buttons before mouseup. */}
+      <Button size="sm" onMouseDown={event => event.preventDefault()} onClick={onSave} disabled={saving || (!edits.length && !editing) || !canSave || (errors.length > 0 && !editing)}>{saving ? 'Saving…' : 'Save all'}</Button>
+      <Button size="sm" variant="ghost" onMouseDown={event => event.preventDefault()} onClick={onDiscard} disabled={saving || (!edits.length && !editing)}>Discard all</Button>
     </div>
     {message && <p role="alert" className="mt-2 text-sm text-destructive">{message}</p>}
     {!!errors.length && <div role="alert" className="mt-2 max-h-28 overflow-auto text-sm text-destructive">
