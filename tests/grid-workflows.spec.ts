@@ -57,12 +57,16 @@ test('500-cell paste is one undoable draft batch and one save', async ({ page })
 test('Save and Discard finish an open editor; Escape cancels without a draft', async ({ page }) => {
   const region = page.getByRole('region', { name: 'Batch editing demo' });
   const cell = region.locator('#cell-1-amount');
+  await edit(region, 1, 'amount', '-1');
+  await expect(cell).toHaveAttribute('aria-invalid', 'true');
   await cell.dblclick();
   await region.getByLabel('Edit Amount').fill('125');
   await region.getByRole('button', { name: 'Save all', exact: true }).click();
   await expect(region.getByText('Saved batches: 1')).toBeVisible();
   await expect(cell).toHaveText('125');
   await expect(region.getByText('0 pending changes', { exact: true })).toBeVisible();
+  await edit(region, 1, 'amount', '-1');
+  await expect(cell).toHaveAttribute('aria-invalid', 'true');
   await cell.dblclick();
   await region.getByLabel('Edit Amount').fill('250');
   await region.getByRole('button', { name: 'Discard all' }).click();
