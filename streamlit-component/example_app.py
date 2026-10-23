@@ -42,6 +42,7 @@ conditional_formats = [
 result = fancy_ui_grid(
     data,
     column_defs,
+    edit_mode="batch",
     enable_grouping_panel=True,
     enable_floating_filters=True,
     enable_pivot_toggle=True,

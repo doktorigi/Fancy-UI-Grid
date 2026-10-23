@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/data-grid/DataGrid';
-import type { ColumnDefinition } from '@/types/data-grid';
+import type { ColumnDefinition, GridEdit } from '@/types/data-grid';
 import { ArrowLeft, Table as TableIcon } from 'lucide-react';
 import type { ResultPolicy } from './types';
 
@@ -117,6 +117,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
     setResultsData(data);
   };
 
+  const handleBatchSave = async (edits: GridEdit<ResultPolicy>[]) => {
+    const changes = new Map<string | number, Partial<ResultPolicy>>();
+    edits.forEach(edit => changes.set(edit.rowId, { ...changes.get(edit.rowId), [edit.field]: edit.value }));
+    setResultsData(previous => previous.map(row => {
+      if (!changes.has(row.id)) return row;
+      const updated = { ...row, ...changes.get(row.id) };
+      updated.difference = Math.round((updated.newPremium - updated.currentPremium) * 100) / 100;
+      return updated;
+    }));
+  };
+
 
   const resultsGridColumnDefs = useMemo<ColumnDefinition<ResultPolicy>[]>(() => [
     { field: 'company', headerText: 'Company', sortable: true, filterable: true, filterType: 'text', defaultWidth: '180px' },
@@ -152,6 +163,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
       aggregate: ['sum', 'avg'],
       group: 'Premium',
       editable: true,
+      editor: 'number',
+      validation: { required: true, min: 0 },
       conditionalFormats: [
         { dataBar: { min: 800, max: 2500, color: 'rgba(59, 130, 246, 0.2)' } },
       ],
@@ -345,6 +358,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ raterVersion, onBackTo
             { field: 'difference', operator: '<', value: 0, style: { color: '#16a34a', fontWeight: 'bold' } },
           ]}
           onCellEdit={handleCellEdit}
+          editMode={virtualizedDemo ? 'cell' : 'batch'}
+          onBatchSave={handleBatchSave}
           enableRowReorder={!virtualizedDemo}
           onRowsReordered={handleRowsReordered}
           detailRenderer={(row) => (

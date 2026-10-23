@@ -5,7 +5,7 @@ import {
   type ComponentProps,
 } from 'streamlit-component-lib';
 import { DataGrid } from '@/components/data-grid/DataGrid';
-import type { ColumnDefinition, HierarchicalData } from '@/types/data-grid';
+import type { BatchSaveResult, ColumnDefinition, GridDataSource, GridEdit, HierarchicalData, ServerRowsRequest, ServerRowsResult } from '@/types/data-grid';
 
 interface Row extends HierarchicalData<Row> {
   [key: string]: any;
@@ -27,6 +27,10 @@ function FancyGrid({ args, theme }: ComponentProps) {
   const edits = React.useRef<CellEdit[]>([]);
   const selectedIds = React.useRef<(string | number)[]>([]);
   const serverParams = React.useRef<any>(null);
+  const requests = React.useRef(new Map<string, { request: ServerRowsRequest<Row>; resolve: (result: ServerRowsResult<Row>) => void; reject: (error: Error) => void; cleanup: () => void }>());
+  const batchRequest = React.useRef<{ id: string; edits: GridEdit<Row>[]; resolve: (result: BatchSaveResult) => void } | null>(null);
+  const serial = React.useRef(0);
+  const instanceId = React.useRef(`grid-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   React.useEffect(() => {
     setData(args.data ?? []);
@@ -39,7 +43,53 @@ function FancyGrid({ args, theme }: ComponentProps) {
       selected_ids: selectedIds.current,
       edits: edits.current,
       server_params: serverParams.current,
+      server_requests: Array.from(requests.current, ([id, pending]) => ({ id, request: pending.request })),
+      batch_request: batchRequest.current ? { id: batchRequest.current.id, edits: batchRequest.current.edits } : null,
     });
+  };
+  const pushRef = React.useRef(pushState);
+  pushRef.current = pushState;
+
+  const dataSource = React.useMemo<GridDataSource<Row> | undefined>(() => args.data_source_enabled ? {
+    getRows: (request, signal) => new Promise((resolve, reject) => {
+      if (signal.aborted) { reject(new Error('Cancelled')); return; }
+      const id = `${instanceId.current}-${++serial.current}`;
+      const abort = () => { requests.current.delete(id); reject(new Error('Cancelled')); };
+      signal.addEventListener('abort', abort, { once: true });
+      requests.current.set(id, { request, resolve, reject, cleanup: () => signal.removeEventListener('abort', abort) });
+      pushRef.current();
+    }),
+  } : undefined, [args.data_source_enabled]);
+
+  React.useEffect(() => {
+    for (const response of args.server_responses ?? []) {
+      const pending = requests.current.get(response.id);
+      if (!pending) continue;
+      requests.current.delete(response.id);
+      pending.cleanup();
+      if (response.error) pending.reject(new Error(response.error));
+      else pending.resolve(response.result);
+    }
+    const response = args.batch_response;
+    const pending = batchRequest.current;
+    if (response && pending && pending.id === response.id) {
+      batchRequest.current = null;
+      pending.resolve(response.result);
+    }
+  }, [args.server_responses, args.batch_response]);
+
+  const handleBatchSave = async (changes: GridEdit<Row>[]) => {
+    const result = args.batch_save_enabled ? await new Promise<BatchSaveResult>(resolve => {
+      batchRequest.current = { id: `${instanceId.current}-save-${++serial.current}`, edits: changes, resolve };
+      pushState();
+    }) : undefined;
+    if (result?.errors?.length || result?.message) return result;
+    const byId = new Map<string | number, Record<string, any>>();
+    changes.forEach(change => byId.set(change.rowId, { ...byId.get(change.rowId), [change.field]: change.value }));
+    setData(prev => prev.map(row => byId.has(row.id) ? { ...row, ...byId.get(row.id) } : row));
+    edits.current = changes.map(change => ({ row_id: change.rowId, field: change.field, value: change.value }));
+    pushState();
+    return result;
   };
 
   const handleCellEdit = (rowId: string | number, field: string, value: any) => {
@@ -101,6 +151,13 @@ function FancyGrid({ args, theme }: ComponentProps) {
         storageKey={args.storage_key ?? 'fancyUiGridStreamlit'}
         conditionalFormats={args.conditional_formats}
         serverSide={args.server_side ?? false}
+        dataSource={dataSource}
+        dataSourceVersion={args.data_source_version}
+        serverRowModelOptions={args.server_row_model_options}
+        virtualized={args.virtualized ?? false}
+        virtualizedMaxHeight={args.viewport_height ?? 500}
+        editMode={args.edit_mode ?? 'cell'}
+        onBatchSave={handleBatchSave}
         totalRowCount={args.total_row_count}
         onServerParamsChange={handleServerParamsChange}
         onCellEdit={handleCellEdit}

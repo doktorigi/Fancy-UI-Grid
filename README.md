@@ -7,7 +7,12 @@ A feature-rich, open-source React data grid built with Next.js, ShadCN UI compon
 
 **▶ Live demo: [doktorigi.github.io/Fancy-UI-Grid](https://doktorigi.github.io/Fancy-UI-Grid/)** — every feature below, interactive. (The [bulk-repricing app demo](https://doktorigi.github.io/Fancy-UI-Grid/repricing/) shows the grid inside a realistic workflow.)
 
+**New in v1.1.0:** [Try batch editing and lazy server data](https://doktorigi.github.io/Fancy-UI-Grid/workflows/). The hosted demo uses a 25,000-row browser preview; [run the SQLite example](docs/advanced-workflows.md#sqlite-example-with-one-million-rows) for one million database records. See the [release notes](docs/releases/v1.1.0.md).
+
 ## Features
+
+* **Validated Batch Editing** — opt into `editMode="batch"` to stage inline/paste/fill changes, validate cells and whole rows, review original/pending values, and Save all or Discard. Includes typed/custom editors, asynchronous saves, server error feedback, and draft undo/redo. React and Streamlit supported.
+* **Lazy Server-Side Row Model** — supply `dataSource` for scrolling/group expansion on demand, a bounded block cache, cancellation and retry, server grouping/aggregates/pivots, and full-query totals. Includes a parameterized SQLite reference backend and a million-row demo. See [advanced workflows](docs/advanced-workflows.md) and the `/workflows` demo.
 
 * **Single & Multi-Column Sorting** — click column headers to cycle `asc → desc → none`, or **Shift+Click** multiple headers to sort by multiple columns in priority order with numbered badges (`1`, `2`, `3`…).
 * **Floating Filter Row (Quick Filters)** — set `enableFloatingFilters` (or toggle **Quick Filters** in the toolbar) to display an inline filter row directly beneath headers supporting instant substring search, numeric comparisons/ranges (`>100`, `<=50`, `10..50`), dropdowns, and date buckets.
@@ -69,6 +74,7 @@ The grid is distributed ShadCN-style: copy the source into your project rather t
 1. **Copy these files** into your Next.js/React + Tailwind project:
    * `src/components/data-grid/` (the whole folder)
    * `src/types/data-grid.ts`
+   * `src/hooks/useGridDrafts.ts`, `src/hooks/useServerRowModel.ts`, `src/lib/gridEditing.ts`, and `src/lib/serverRowModel.ts`
    * `src/lib/utils.ts`, `src/lib/gridProcessing.ts`, `src/lib/pivotTable.ts`, `src/lib/formulaEngine.ts`, `src/lib/savedViews.ts`, `src/lib/conditionalFormatting.ts`, `src/lib/rangeChart.ts`, `src/lib/sparkline.ts`, and `src/lib/exportUtils.ts`
    * The grid-specific styles from `src/app/globals.css` (the `.sticky-header-cell`, `.sticky-body-cell`, `.pinned-*-shadow`, `.cell-focused`, `.group-header-row`, and column-drag rules)
 

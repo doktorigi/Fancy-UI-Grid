@@ -12,6 +12,10 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+grid-demo.db
+__pycache__/
 
 # next.js
 /.next/

@@ -2,6 +2,22 @@
 
 This document provides an API reference for the `<DataGrid />` component and its related types, primarily `ColumnDefinition`.
 
+## Batch editing and lazy server data
+
+See [advanced workflows](docs/advanced-workflows.md) for complete request/response types, editor/validation contracts, SQLite examples, and supported combinations.
+
+| Prop | Default | Behavior |
+| --- | --- | --- |
+| `editMode` | `'cell'` | `'batch'` stages changes until Save all succeeds. |
+| `onBatchSave(edits)` | — | One sync/async callback receiving `GridEdit[]` with `rowId`, `field`, `oldValue`, `value`. Return void/{} to succeed, or `{ errors?, message? }` to reject. |
+| `validateRow(row)` | — | Return a row error string, field-error map, or null. |
+| `onPendingEditsChange(edits)` | — | Receives the current coalesced draft. |
+| `dataSource` | — | `getRows(request, signal)` returns `Promise<ServerRowsResult>`. Enables lazy virtual scrolling. |
+| `serverRowModelOptions` | `{ blockSize: 100, maxCachedBlocks: 10, maxConcurrentRequests: 4 }` | Global cache and request limits. |
+| `dataSourceVersion` | — | Change after external writes to invalidate cached rows. |
+
+New `ColumnDefinition` options: `editor` (`text` / `number` / `date` / `boolean` / `select`), `editorOptions`, `cellEditor`, `validation`, and `validate(value, row)`. Column validation accepts `required`, `min`, `max`, `minLength`, `maxLength`, and regex `pattern`.
+
 ## `<DataGrid />` Component Props
 
 The `DataGrid` component is highly configurable through its props.
